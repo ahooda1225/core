@@ -7,6 +7,8 @@ import type { VibeId } from "@/lib/vibes";
 import { PALETTES, type Palette } from "@/lib/palettes";
 
 export const runtime = "nodejs";
+// Give Claude time to design the artwork (Vercel may cut functions off earlier by default).
+export const maxDuration = 60;
 
 export interface VibeResponse {
   trackId: string;
@@ -16,6 +18,8 @@ export interface VibeResponse {
   /** The moving artwork to show while this song plays. */
   art: Palette;
   notice?: string;
+  /** Why the AI artwork wasn't used, when it wasn't. Shown quietly in the UI. */
+  problem?: string;
 }
 
 const ArtSchema = z.object({
@@ -140,7 +144,11 @@ export async function POST(req: Request) {
       artist: songArtist,
       source: pinned ? "pinned" : "default",
       art: fallbackArt,
-      notice: !songTitle ? "Couldn't read this song's name from Spotify." : pinned ? undefined : "Add ANTHROPIC_API_KEY to get artwork made for each song.",
+      problem: !songTitle
+        ? "Couldn't read this song's name from Spotify."
+        : !process.env.ANTHROPIC_API_KEY
+          ? "The site has no ANTHROPIC_API_KEY. Add it in Vercel → Settings → Environment Variables, then redeploy."
+          : undefined,
     };
     return Response.json(out);
   }
@@ -150,10 +158,15 @@ export async function POST(req: Request) {
     const out: VibeResponse = { ...base, artist: songArtist || artist, source: pinned ? "pinned" : "claude", art };
     return Response.json(out);
   } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) console.error("Anthropic key rejected");
-    else if (err instanceof Anthropic.APIError) console.error("Claude API error", err.status, err.message);
-    else console.error(err);
-    const out: VibeResponse = { ...base, artist: songArtist, source: pinned ? "pinned" : "default", art: fallbackArt };
+    let problem = "The AI couldn't design artwork for this song.";
+    if (err instanceof Anthropic.AuthenticationError) problem = "Your Anthropic key was rejected. Check ANTHROPIC_API_KEY in Vercel, then redeploy.";
+    else if (err instanceof Anthropic.PermissionDeniedError) problem = "Your Anthropic key can't use this model. Check the key's workspace and permissions.";
+    else if (err instanceof Anthropic.RateLimitError) problem = "Too many requests, or the Anthropic account is out of credit.";
+    else if (err instanceof Anthropic.BadRequestError) problem = `Anthropic rejected the request: ${err.message.slice(0, 160)}`;
+    else if (err instanceof Anthropic.APIConnectionTimeoutError) problem = "The AI took too long to answer.";
+    else if (err instanceof Anthropic.APIError) problem = `Anthropic error ${err.status ?? ""}: ${err.message.slice(0, 160)}`;
+    console.error("designArt failed:", err);
+    const out: VibeResponse = { ...base, artist: songArtist, source: pinned ? "pinned" : "default", art: fallbackArt, problem };
     return Response.json(out);
   }
 }

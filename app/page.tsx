@@ -179,7 +179,7 @@ export default function Home() {
           <input id="song-url" type="url" inputMode="url" placeholder="Spotify link" value={url} onChange={(e) => setUrl(e.target.value)} autoComplete="off" />
           {loading && <span className="spin" aria-label="Loading" />}
         </form>
-        {error && <p className="msg" role="alert">{error}</p>}
+        {(error || song?.problem) && <p className="msg" role="alert">{error || song?.problem}</p>}
       </footer>
 
       <div className={`embed${showEmbed ? " show" : ""}`} ref={spotify.hostRef} aria-hidden={!showEmbed} />
