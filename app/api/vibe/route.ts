@@ -22,15 +22,21 @@ export interface VibeResponse {
   notice?: string;
   /** Why the AI artwork wasn't used, when it wasn't. Shown quietly in the UI. */
   problem?: string;
-  /** The song's video: a detailed first frame and how it moves, signed so /api/video only makes what we wrote. */
-  video?: { scene: string; motion: string; sig: string };
+  /** Lyric moments in song order: a detailed scene for the image generator each, signed so /api/picture only paints scenes we wrote. */
+  moments?: { scene: string; sig: string }[];
 }
 
 
 
 const ArtSchema = z.object({
-  scene: z.string().describe("The video's first frame: a richly detailed prompt for an illustration model, 70-120 words, built from the song's most vivid lyric imagery. See the scene rules."),
-  video_motion: z.string().describe("How the scene moves in a 6-second clip, 20-40 words: a slow camera move plus 2-3 things in motion (hair, curtains, light, rain, petals, steam), gentle enough to loop."),
+  moments: z
+    .array(
+      z.object({
+        part: z.enum(["intro", "verse", "chorus", "bridge", "outro"]),
+        scene: z.string().describe("A richly detailed prompt for an illustration model, 60-110 words, painting what the lyrics evoke at this point in the song. See the scene rules."),
+      }),
+    )
+    .describe("Exactly 3 lyric moments in song order"),
   artist: z.string().describe("The song's artist, or empty string if unknown"),
   name: z.string().describe("2-3 word lowercase name for the artwork, like a playlist title, e.g. 'slow burn neon'"),
   deep: z.string().describe("Darkest background color, hex like #0a0b14. Usually very dark."),
@@ -79,7 +85,7 @@ async function embedArtist(trackId: string): Promise<string> {
 
 // Same song, same artwork: cache the design (one Claude call per song, not per play).
 const designArt = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => designArtNow(title, artist, note), ["art-v4", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+  unstable_cache(() => designArtNow(title, artist, note), ["art-v3", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
@@ -89,12 +95,12 @@ const SYSTEM = `You design a slow, abstract moving artwork that plays full scree
 
 The artwork is a dark, film-grained field of drifting smoke-like color with soft out-of-focus lights. You choose its colors, light motion, speed and texture. Make it beautiful and tasteful: rich but not garish, with enough contrast between deep and light. Never quote lyrics.
 
-You also write the song's video: one scene that loops for the whole song, plus how it moves. Build the scene from the song's most vivid lyric imagery: the objects, actions, places, weather and feelings named or implied in its lines, combined into one moment. Paraphrase the imagery; never quote or write out lyrics. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint it there. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write every scene for that style — dreamy and illustrated, never photographic — and lean into one surreal touch per scene that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
+You also write the lyric moments: 3 pictures that play in order as the song goes on, one for each part (for example verse, chorus, bridge). Each one paints a specific image the lyrics evoke at that point: the objects, actions, places, weather and feelings named or implied in those lines. Paraphrase the imagery; never quote or write out lyrics. All moments live in one world with one color palette and light, so together they feel like stills from the same film. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint each moment in it. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write every scene for that style — dreamy and illustrated, never photographic — and lean into one surreal touch per scene that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
 
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;
 
-async function designArtNow(title: string, artist: string, note?: string): Promise<{ artist: string; art: Palette; scene: string; motion: string }> {
+async function designArtNow(title: string, artist: string, note?: string): Promise<{ artist: string; art: Palette; scenes: string[] }> {
   const client = new Anthropic();
   const ask = `Song: "${title}"${artist ? ` by ${artist}` : ""}${note ? `\nThe owner pictures this song as: ${note}` : ""}`;
   const response = await client.beta.messages.parse({
@@ -107,13 +113,12 @@ async function designArtNow(title: string, artist: string, note?: string): Promi
     messages: [{ role: "user", content: ask }],
   });
   const o = response.parsed_output;
-  if (response.stop_reason === "refusal" || !o || !o.scene.trim()) throw new Error("no usable artwork");
+  if (response.stop_reason === "refusal" || !o || o.moments.length === 0) throw new Error("no usable artwork");
   const colors = [o.deep, o.mid, o.light, o.glow];
   if (!colors.every(isHex)) throw new Error("bad colors");
   return {
     artist: o.artist,
-    scene: o.scene.trim().slice(0, 1500),
-    motion: o.video_motion.trim().slice(0, 500),
+    scenes: o.moments.map((m) => m.scene.trim().slice(0, 1500)).filter(Boolean).slice(0, 3),
     art: {
       id: "custom",
       name: o.name.toLowerCase().slice(0, 40),
@@ -170,13 +175,13 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { artist, art, scene, motion } = await designArt(trackId, songTitle, songArtist, pinned?.note);
+    const { artist, art, scenes } = await designArt(trackId, songTitle, songArtist, pinned?.note);
     const out: VibeResponse = {
       ...base,
       artist: songArtist || artist,
       source: pinned ? "pinned" : "claude",
       art,
-      ...(process.env.FAL_KEY ? { video: { scene, motion, sig: signScene(trackId, `${scene}\n${motion}`) } } : {}),
+      ...(process.env.FAL_KEY ? { moments: scenes.map((scene) => ({ scene, sig: signScene(trackId, scene) })) } : {}),
     };
     return Response.json(out);
   } catch (err) {
