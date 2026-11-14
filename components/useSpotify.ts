@@ -97,7 +97,7 @@ export function useSpotify(previewOnly: boolean) {
       host.innerHTML = "";
       const el = document.createElement("div");
       host.appendChild(el);
-      api.createController(el, { uri: pendingUri.current ?? uri, width: "100%", height: 152 }, (ctrl) => {
+      api.createController(el, { uri: pendingUri.current ?? uri, width: "100%", height: 80 }, (ctrl) => {
         controllerRef.current = ctrl;
         creating.current = false;
         setReady(true);
@@ -119,9 +119,12 @@ export function useSpotify(previewOnly: boolean) {
   const toggle = useCallback(() => {
     const c = controllerRef.current;
     if (!c) return;
-    if (state.isPaused) c.resume();
+    if (!everPlayed) c.play();
+    else if (state.isPaused) c.resume();
     else c.pause();
-  }, [state.isPaused]);
+  }, [state.isPaused, everPlayed]);
 
-  return { hostRef, ready, state, everPlayed, load, toggle, previewMs: PREVIEW_MS };
+  const seek = useCallback((seconds: number) => controllerRef.current?.seek(seconds), []);
+
+  return { hostRef, ready, state, everPlayed, load, toggle, seek, previewMs: PREVIEW_MS };
 }

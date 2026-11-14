@@ -2,38 +2,14 @@
 // whatever the room is hearing (mic) or a song file. Framework-free so it can
 // run anywhere; the React component in components/ArtScreen.tsx drives it.
 
-import type { VibeId } from "./vibes";
 
-export interface Palette {
-  id: VibeId;
-  name: string;
-  /** How energetic this mood is, 0..1. "Follow music" picks the closest one. */
-  e: number;
-  /** Light motion: 0 drift, 1 falling snow, 2 rising embers. */
-  mode: 0 | 1 | 2;
-  /** deep, mid, light, glow */
-  c: [string, string, string, string];
-  multi?: boolean;
-  film?: boolean;
-}
-
-export const PALETTES: Palette[] = [
-  { id: "fireplace", name: "Fireside", e: 0.1, mode: 2, c: ["#0e0402", "#4a1606", "#e0611c", "#ffc879"] },
-  { id: "rain-window", name: "Rain Window", e: 0.17, mode: 0, c: ["#050914", "#14243a", "#4f6f8f", "#ffb46b"] },
-  { id: "snowfall", name: "First Snow", e: 0.24, mode: 1, c: ["#08101f", "#22324f", "#8ea3c4", "#ffd6a0"] },
-  { id: "fog-drive", name: "Silver Fog", e: 0.34, mode: 0, c: ["#3c4048", "#7d848e", "#cfd3d8", "#c9b79a"] },
-  { id: "vintage-film", name: "Red & White", e: 0.42, mode: 0, c: ["#3a0806", "#a3261f", "#efe0cc", "#f0a27a"], film: true },
-  { id: "treehouse", name: "Treehouse", e: 0.48, mode: 0, c: ["#1f173a", "#7a4372", "#ee8f52", "#ffd391"] },
-  { id: "golden-coast", name: "Golden Hour", e: 0.56, mode: 0, c: ["#231f4f", "#b44e70", "#ffa452", "#fff0c4"] },
-  { id: "lights-drive", name: "Lights", e: 0.66, mode: 0, c: ["#07050c", "#2c0f1d", "#9a2a35", "#ffc36b"], multi: true },
-  { id: "neon-city", name: "Neon", e: 0.82, mode: 0, c: ["#05020c", "#2d0948", "#ff2bd6", "#22e6ff"], multi: true },
-  { id: "club", name: "Club", e: 0.95, mode: 0, c: ["#020104", "#1a0638", "#7b2cff", "#3dffb4"], multi: true },
-];
+import { PALETTES, type Palette } from "./palettes";
+export { PALETTES, type Palette };
 
 const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
 const FS = `
 precision highp float;
-uniform vec2 res; uniform float t, energy, pulse, mode, multi, film;
+uniform vec2 res; uniform float t, energy, pulse, mode, multi, film, mono, glow;
 uniform vec3 c0, c1, c2, c3;
 float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -51,6 +27,12 @@ void main(){
   vec3 col = mix(c0, c1, smoothstep(.15, .75, f + vert*.25));
   col = mix(col, c2, smoothstep(.55, 1.05, f*f*1.6 + r.x*.25));
   col += c3 * .18 * smoothstep(.6, 1., r.y);
+  // the void: one soft white glow that breathes with the beat
+  float rr = length(p - vec2(0., .02));
+  float halo = exp(-rr*rr*(26. - 8.*pulse)) * (.32 + .12*energy + .3*pulse);
+  float rim = exp(-pow((rr - .085) * 38., 2.)) * (.35 + .4*pulse);
+  float core = smoothstep(.088, .082, rr);
+  vec3 voidCol = (vec3(halo) + vec3(rim)) * vec3(.94, .95, 1.) * (1. - core);
   vec3 b = vec3(0.);
   for (int i = 0; i < 26; i++) {
     float fi = float(i);
@@ -65,7 +47,7 @@ void main(){
     float tw = .55 + .45*sin(t*(.3 + s1) + fi*2.1);
     vec3 bc = multi > .5 ? mix(c3, hue(s2), .7) : mix(c3, c2, s1*.6);
     float life = mode > 1.5 ? smoothstep(.65, -.2, c.y) : 1.;
-    b += bc * disc * tw * life * (.35 + .4*energy);
+    b += bc * disc * tw * life * (.35 + .4*energy) * (.3 + 1.4*glow);
   }
   col += b * (1. + pulse*.6);
   col += c3 * .12 * pulse * smoothstep(1.2, 0., length(p - vec2(.3, .25)));
@@ -73,6 +55,7 @@ void main(){
   if (film > .5) { col = mix(col, col*vec3(1.08,.96,.82), .6); col = col*.88 + .06; col *= .94 + .06*h(vec2(floor(t*18.), 2.)); }
   col = col / (1. + col*.35) * 1.18;
   col *= mix(.5, 1., smoothstep(1.15, .25, length((uv-.5)*vec2(1.25, 1.))));
+  col = mix(col, voidCol, mono);
   float g = h(gl_FragCoord.xy + fract(t*7.)*100.) - .5;
   col += g * (film > .5 ? .07 : .045);
   gl_FragColor = vec4(col, 1.);
@@ -87,7 +70,8 @@ export interface EngineStatus {
   energy: number; // fast, 0..1
   mood: number; // slow, 0..1
   bpm: number;
-  palette: VibeId;
+  palette: Palette["id"];
+  name: string;
 }
 
 export class ArtEngine {
@@ -99,9 +83,9 @@ export class ArtEngine {
   private last = performance.now();
   private reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  private idx = PALETTES.findIndex((p) => p.id === "snowfall");
-  private cur = { c: PALETTES[this.idx].c.map(hex), mode: 1, multi: 0, film: 0 };
-  private from: { c: number[][]; start: number } | null = null;
+  private active: Palette = PALETTES[0]; // start in the void
+  private cur = { c: PALETTES[0].c.map(hex), mode: 0, multi: 0, film: 0, mono: 1, flow: 0.5, glow: 0.5 };
+  private from: { c: number[][]; mono: number; flow: number; glow: number; start: number } | null = null;
 
   follow = true;
   private holdUntil = 0;
@@ -145,7 +129,7 @@ export class ArtEngine {
     const loc = gl.getAttribLocation(prog, "p");
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    for (const k of ["res", "t", "energy", "pulse", "mode", "multi", "film", "c0", "c1", "c2", "c3"]) this.U[k] = gl.getUniformLocation(prog, k);
+    for (const k of ["res", "t", "energy", "pulse", "mode", "multi", "film", "mono", "glow", "c0", "c1", "c2", "c3"]) this.U[k] = gl.getUniformLocation(prog, k);
     this.resize = this.resize.bind(this);
     addEventListener("resize", this.resize);
     this.resize();
@@ -168,13 +152,17 @@ export class ArtEngine {
   }
 
   /** Switch mood. `holdMs` keeps "follow music" from moving off it for a while. */
-  setPalette(id: VibeId, holdMs = 0) {
-    const i = PALETTES.findIndex((p) => p.id === id);
-    if (i < 0) return;
+  setPalette(id: Palette["id"], holdMs = 0) {
+    const p = PALETTES.find((x) => x.id === id);
+    if (p) this.setArt(p, holdMs);
+  }
+
+  /** Show any artwork: a preset or one Claude designed for the song. `holdMs` pauses "follow music". */
+  setArt(p: Palette, holdMs = 0) {
     if (holdMs) this.holdUntil = performance.now() + holdMs;
-    if (i === this.idx) return;
-    this.from = { c: this.cur.c.map((x) => x.slice()), start: performance.now() };
-    this.idx = i;
+    if (p === this.active) return;
+    this.from = { c: this.cur.c.map((x) => x.slice()), mono: this.cur.mono, flow: this.cur.flow, glow: this.cur.glow, start: performance.now() };
+    this.active = p;
     this.lastSwitch = performance.now();
     this.emit(true);
   }
@@ -286,34 +274,39 @@ export class ArtEngine {
 
   private followMusic(now: number) {
     if (!this.follow || this.source === "none" || now < this.holdUntil) return;
-    let best = 0, d = 9;
-    PALETTES.forEach((p, i) => { const dd = Math.abs(p.e - this.L.mood); if (dd < d) { d = dd; best = i; } });
-    if (best !== this.idx && now - this.lastSwitch > 20000) this.setPalette(PALETTES[best].id);
+    let best = 1, d = 9;
+    PALETTES.forEach((p, i) => { if (p.mono) return; const dd = Math.abs(p.e - this.L.mood); if (dd < d) { d = dd; best = i; } });
+    if (PALETTES[best] !== this.active && now - this.lastSwitch > 20000) this.setArt(PALETTES[best]);
   }
 
   private stepPalette(now: number) {
-    const v = PALETTES[this.idx];
+    const v = this.active;
     const target = v.c.map(hex);
     const apply = () => { this.cur.mode = v.mode; this.cur.multi = v.multi ? 1 : 0; this.cur.film = v.film ? 1 : 0; };
+    const monoTarget = v.mono ? 1 : 0;
+    const flowTarget = v.flow ?? 0.5, glowTarget = v.glow ?? 0.5;
     if (this.from) {
       const k = Math.min(1, (now - this.from.start) / 4000), e = k * k * (3 - 2 * k);
       this.cur.c = this.from.c.map((c, j) => c.map((x, m) => x + (target[j][m] - x) * e)) as typeof this.cur.c;
+      this.cur.mono = this.from.mono + (monoTarget - this.from.mono) * e;
+      this.cur.flow = this.from.flow + (flowTarget - this.from.flow) * e;
+      this.cur.glow = this.from.glow + (glowTarget - this.from.glow) * e;
       if (e > 0.5) apply();
       if (k >= 1) this.from = null;
-    } else { this.cur.c = target; apply(); }
+    } else { this.cur.c = target; this.cur.mono = monoTarget; this.cur.flow = flowTarget; this.cur.glow = glowTarget; apply(); }
   }
 
   private emit(force = false) {
     if (!this.onStatus) return;
     if (!force && this.statusTick++ % 6) return;
-    this.onStatus({ source: this.source, energy: this.L.fast, mood: this.L.mood, bpm: this.L.bpm, palette: PALETTES[this.idx].id });
+    this.onStatus({ source: this.source, energy: this.L.fast, mood: this.L.mood, bpm: this.L.bpm, palette: this.active.id, name: this.active.name });
   }
 
   private frame(now: number) {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.listen(now);
-    if (!this.reduce) this.T += dt * (0.6 + this.L.fast * 1.4);
+    if (!this.reduce) this.T += dt * (0.25 + this.cur.flow * 0.9) * (0.6 + this.L.fast * 1.4);
     this.stepPalette(now);
     if (now - this.lastFollow > 1000) { this.lastFollow = now; this.followMusic(now); }
     const { gl, U, cur, L } = this;
@@ -324,6 +317,8 @@ export class ArtEngine {
     gl.uniform1f(U.mode, cur.mode);
     gl.uniform1f(U.multi, cur.multi);
     gl.uniform1f(U.film, cur.film);
+    gl.uniform1f(U.mono, cur.mono);
+    gl.uniform1f(U.glow, cur.glow);
     gl.uniform3fv(U.c0, cur.c[0]);
     gl.uniform3fv(U.c1, cur.c[1]);
     gl.uniform3fv(U.c2, cur.c[2]);

@@ -1,60 +1,118 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Viewfinder from "@/components/Viewfinder";
+import { useEffect, useRef, useState } from "react";
 import { useSpotify } from "@/components/useSpotify";
-import { PINNED_SONGS } from "@/lib/songs";
-import { VIBES, VIBE_IDS, type VibeId } from "@/lib/vibes";
+import { ArtEngine, type EngineStatus } from "@/lib/art-engine";
 import type { VibeResponse } from "./api/vibe/route";
 
-const idleScene = (id: VibeId) => ({ vibeId: id, place: VIBES[id].place, time: VIBES[id].time, caption: "" });
+const IDLE_MS = 3500;
 
 function fmt(ms: number) {
-  const s = Math.max(0, Math.floor(ms / 1000));
+  const s = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+const Icon = {
+  play: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" /></svg>,
+  pause: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" /></svg>,
+  mic: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
+  full: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+  exit: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+  link: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
+};
+
 export default function Home() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<ArtEngine | null>(null);
+  const [status, setStatus] = useState<EngineStatus | null>(null);
+  const [glError, setGlError] = useState("");
+
   const [url, setUrl] = useState("");
-  const [artist, setArtist] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<VibeResponse | null>(null);
-  const [idx, setIdx] = useState(0);
-  const [preview, setPreview] = useState(true);
-  const spotify = useSpotify(preview);
-  // Preview any scene with ?scene=<id>, e.g. /?scene=fog-drive
-  const [idle, setIdle] = useState(idleScene("snowfall"));
+  const [song, setSong] = useState<VibeResponse | null>(null);
+  const [showEmbed, setShowEmbed] = useState(false);
+  const [idle, setIdle] = useState(false);
+  const [isFull, setIsFull] = useState(false);
+  const spotify = useSpotify(false);
+  const { isPaused, position, duration } = spotify.state;
+  const playing = !isPaused;
+
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("scene");
-    if (q && (VIBE_IDS as readonly string[]).includes(q)) setIdle(idleScene(q as VibeId));
+    if (!canvasRef.current) return;
+    try {
+      const e = new ArtEngine(canvasRef.current);
+      e.onStatus = setStatus;
+      engineRef.current = e;
+      return () => e.destroy();
+    } catch (err) {
+      setGlError(err instanceof Error ? err.message : "This browser can't draw the artwork.");
+    }
   }, []);
 
   useEffect(() => {
-    try {
-      const v = localStorage.getItem("preview");
-      if (v === "off") setPreview(false);
-    } catch {}
+    if (engineRef.current) engineRef.current.playingHint = playing;
+    if (playing) setShowEmbed(false);
+  }, [playing]);
+
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout>;
+    const wake = () => {
+      setIdle(false);
+      clearTimeout(t);
+      t = setTimeout(() => setIdle(true), IDLE_MS);
+    };
+    const evs = ["pointermove", "pointerdown", "keydown", "touchstart"] as const;
+    evs.forEach((e) => addEventListener(e, wake, { passive: true }));
+    wake();
+    return () => { clearTimeout(t); evs.forEach((e) => removeEventListener(e, wake)); };
   }, []);
-  const setPreviewSaved = (on: boolean) => {
-    setPreview(on);
-    try { localStorage.setItem("preview", on ? "on" : "off"); } catch {}
-  };
+
+  useEffect(() => {
+    const on = () => setIsFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", on);
+    const key = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === "f") toggleFull();
+    };
+    addEventListener("keydown", key);
+    return () => { document.removeEventListener("fullscreenchange", on); removeEventListener("keydown", key); };
+  }, []);
+
+  function toggleFull() {
+    const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else if (el.requestFullscreen) void el.requestFullscreen().catch(() => {});
+    else el.webkitRequestFullscreen?.();
+  }
+
+  async function toggleMic() {
+    const e = engineRef.current;
+    if (!e) return;
+    setError("");
+    if (status?.source === "mic") { e.stopAudio(); return; }
+    try { await e.useMic(); } catch { setError("Allow the microphone in your browser's address bar."); }
+  }
+
+  function playPause() {
+    if (!song) return;
+    spotify.toggle();
+    // If the browser won't let us start Spotify from here, show its own player to tap.
+    if (!spotify.everPlayed) setTimeout(() => setShowEmbed((v) => v || !spotify.everPlayed), 1800);
+  }
 
   async function lookUp(link: string) {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/vibe", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: link, artist }),
-      });
+      const res = await fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong. Try again.");
-      setResult(data as VibeResponse);
-      setIdx(0);
-      spotify.load((data as VibeResponse).trackId);
+      const r = data as VibeResponse;
+      setSong(r);
+      setUrl("");
+      spotify.load(r.trackId);
+      engineRef.current?.setArt(r.art, 24 * 3600_000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
     } finally {
@@ -62,145 +120,69 @@ export default function Home() {
     }
   }
 
-  const scene = result?.scenes[idx] ?? idle;
-  const vibe = VIBES[scene.vibeId];
-  const playing = !spotify.state.isPaused;
-  const running = playing || !spotify.everPlayed;
-  const status = !result ? "rec" : playing ? "play" : spotify.everPlayed ? "pause" : "rec";
-  const caption = loading
-    ? "finding where this song belongs…"
-    : result
-      ? scene.caption
-      : "Paste a Spotify song link and I'll show you where it belongs.";
-
-  const chips = PINNED_SONGS.filter((s) => s.spotifyUrl);
+  const listening = status?.source === "mic";
+  const hide = idle && isFull;
+  const pct = duration ? Math.min(100, (position / duration) * 100) : 0;
 
   return (
-    <main className="app">
-      <section className="screen" aria-label="Scene">
-        <Viewfinder
-          vibeId={scene.vibeId}
-          place={scene.place}
-          time={scene.time}
-          caption={caption}
-          running={running}
-          status={status}
-          look={vibe.look ?? "digicam"}
-        />
+    <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
+      <section className="stage" aria-label="Artwork">
+        <canvas ref={canvasRef} className="art" aria-hidden="true" />
+        {glError && <p className="gl-error">{glError}</p>}
+        <header className="stage-top">
+          <span className="art-name">{song ? status?.name ?? "" : ""}</span>
+          <div className="tools">
+            <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop listening" : "Listen to the room"} title="Listen to the room" onClick={() => void toggleMic()}>{Icon.mic}</button>
+            <button type="button" className="tool" aria-label={isFull ? "Exit full screen" : "Full screen"} title="Full screen (F)" onClick={toggleFull}>{isFull ? Icon.exit : Icon.full}</button>
+          </div>
+        </header>
       </section>
 
-      <section className="body" aria-label="Controls">
-        <div className="body-inner">
-          <form
-            className="find"
-            onSubmit={(e) => { e.preventDefault(); if (url.trim()) lookUp(url.trim()); }}
-          >
-            <label htmlFor="song-url" className="label">Spotify song link</label>
-            <div className="find-row">
-              <input
-                id="song-url"
-                type="url"
-                inputMode="url"
-                placeholder="https://open.spotify.com/track/…"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                autoComplete="off"
-              />
-              <button type="submit" className="shutter" disabled={loading || !url.trim()}>
-                {loading ? "…" : "Find vibe"}
-              </button>
-            </div>
-            <input
-              id="song-artist"
-              className="artist"
-              placeholder="Artist (optional, helps the AI)"
-              value={artist}
-              onChange={(e) => setArtist(e.target.value)}
-              autoComplete="off"
-            />
-            {error && <p className="error" role="alert">{error}</p>}
-          </form>
-
-          {chips.length > 0 && (
-            <div className="chips">
-              <span className="label">Your picks</span>
-              <div className="chip-row">
-                {chips.map((s) => (
-                  <button
-                    key={s.spotifyUrl}
-                    type="button"
-                    className="chip"
-                    onClick={() => { setUrl(s.spotifyUrl!); lookUp(s.spotifyUrl!); }}
-                  >
-                    {s.title || s.vibes.map((v) => VIBES[v].name).join(" / ")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div className="now">
-              <div className="now-head">
-                {result.thumbnail && <img src={result.thumbnail} alt="" width={44} height={44} />}
-                <div className="now-text">
-                  <strong>{result.title}</strong>
-                  <span>
-                    {result.artist ? `${result.artist} · ` : ""}
-                    {result.source === "pinned" ? "your pick" : result.source === "claude" ? "picked by AI" : "default scene"}
-                  </span>
-                </div>
-              </div>
-              {result.scenes.length > 1 && (
-                <div className="scenes" role="tablist" aria-label="Scenes">
-                  {result.scenes.map((s, i) => (
-                    <button
-                      key={s.vibeId}
-                      type="button"
-                      role="tab"
-                      aria-selected={i === idx}
-                      className="scene-btn"
-                      onClick={() => setIdx(i)}
-                    >
-                      {VIBES[s.vibeId].name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {result.notice && <p className="notice">{result.notice}</p>}
-            </div>
-          )}
-
-          <div className="player">
-            <div className="player-bar">
-              <label className="switch" htmlFor="preview-toggle">
-                <input
-                  id="preview-toggle"
-                  type="checkbox"
-                  checked={preview}
-                  onChange={(e) => setPreviewSaved(e.target.checked)}
-                />
-                <span className="track" aria-hidden="true"><span className="knob" /></span>
-                30-sec preview
-              </label>
-              <span className="time">
-                {spotify.state.duration > 0
-                  ? `${fmt(spotify.state.position)} / ${fmt(preview ? Math.min(spotify.previewMs, spotify.state.duration) : spotify.state.duration)}`
-                  : ""}
-              </span>
-            </div>
-            <div className="embed" ref={spotify.hostRef} hidden={!result} />
-            {result && (
-              <a className="hint" href={`https://open.spotify.com/track/${result.trackId}`} target="_blank" rel="noreferrer">
-                Player not showing? Open in Spotify ↗
-              </a>
-            )}
-            {!preview && (
-              <p className="hint">Full songs play only if you&apos;re logged into Spotify in this browser. Otherwise Spotify plays a preview.</p>
-            )}
+      <footer className="bar" aria-label="Now playing">
+        <div className="now">
+          <span className="swatch" aria-hidden="true" style={song ? { background: `radial-gradient(circle at 30% 30%, ${song.art.c[3]}, ${song.art.c[2]} 35%, ${song.art.c[1]} 65%, ${song.art.c[0]})` } : undefined} />
+          <div className="meta">
+            <span className="title">{song?.title ?? "Nothing playing"}</span>
+            <span className="artist">{song ? song.artist : "Paste a Spotify link"}</span>
           </div>
         </div>
-      </section>
+
+        <div className="transport">
+          <button type="button" className="play" onClick={playPause} disabled={!song} aria-label={playing ? "Pause" : "Play"}>
+            {playing ? Icon.pause : Icon.play}
+          </button>
+          <div className="progress">
+            <span className="time">{fmt(position)}</span>
+            <div
+              className="track"
+              role="slider"
+              aria-label="Seek"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(duration / 1000)}
+              aria-valuenow={Math.round(position / 1000)}
+              tabIndex={song ? 0 : -1}
+              onClick={(e) => {
+                if (!duration) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                spotify.seek(((e.clientX - r.left) / r.width) * (duration / 1000));
+              }}
+            >
+              <div className="fill" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="time">{duration ? `-${fmt(duration - position)}` : "0:00"}</span>
+          </div>
+        </div>
+
+        <form className="paste" onSubmit={(e) => { e.preventDefault(); if (url.trim()) void lookUp(url.trim()); }}>
+          <label htmlFor="song-url" className="sr-only">Spotify song link</label>
+          <span className="paste-icon">{Icon.link}</span>
+          <input id="song-url" type="url" inputMode="url" placeholder="Spotify link" value={url} onChange={(e) => setUrl(e.target.value)} autoComplete="off" />
+          {loading && <span className="spin" aria-label="Loading" />}
+        </form>
+        {error && <p className="msg" role="alert">{error}</p>}
+      </footer>
+
+      <div className={`embed${showEmbed ? " show" : ""}`} ref={spotify.hostRef} aria-hidden={!showEmbed} />
     </main>
   );
 }
