@@ -32,8 +32,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [song, setSong] = useState<VibeResponse | null>(null);
   const [showEmbed, setShowEmbed] = useState(false);
-  const [pictures, setPictures] = useState<string[]>([]);
-  const [shown, setShown] = useState<{ cur: string | null; prev: string | null }>({ cur: null, prev: null });
+  const [frame, setFrame] = useState<string | null>(null);
+  const [video, setVideo] = useState<string | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
   const [painting, setPainting] = useState(false);
   const pulseRef = useRef<HTMLDivElement>(null);
   const currentTrack = useRef("");
@@ -107,48 +108,52 @@ export default function Home() {
     if (!spotify.everPlayed) setTimeout(() => setShowEmbed((v) => v || !spotify.everPlayed), 1800);
   }
 
-  // Paint each lyric moment (first one first), cache the set per song, and show them in order as the song plays.
-  async function paint(r: VibeResponse) {
-    const key = `pics-v2:${r.trackId}`;
-    const ready = (urls: string[]) => {
-      if (currentTrack.current !== r.trackId || urls.length === 0) return;
-      setPictures(urls);
-      if (engineRef.current) engineRef.current.overlayOn = true;
-    };
-    const preload = (url: string) =>
-      new Promise<void>((resolve) => { const img = new Image(); img.onload = img.onerror = () => resolve(); img.src = url; });
+  // One video per song: paint its first frame, start the video, show the frame while it renders, then swap in the video.
+  async function makeVideo(r: VibeResponse) {
+    const key = `vid-v1:${r.trackId}`;
+    const mine = () => currentTrack.current === r.trackId;
+    const onScreen = () => { if (engineRef.current) engineRef.current.overlayOn = true; };
 
-    let cached: string[] = [];
-    try { cached = JSON.parse(localStorage.getItem(key) ?? "[]"); } catch {}
-    const moments = r.moments ?? [];
-    if (cached.length && cached.length >= moments.length) {
-      await preload(cached[0]);
-      ready(cached);
-      return;
-    }
-    if (!moments.length) return;
+    let cached: { image?: string; video?: string } = {};
+    try { cached = JSON.parse(localStorage.getItem(key) ?? "{}"); } catch {}
+    if (cached.video) { setFrame(cached.image ?? null); setVideo(cached.video); onScreen(); return; }
+    if (!r.video) return;
 
     setPainting(true);
-    const urls: string[] = [];
     try {
-      for (const m of moments) {
-        const res = await fetch("/api/picture", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ trackId: r.trackId, scene: m.scene, sig: m.sig }),
-        });
-        const data = await res.json();
-        if (currentTrack.current !== r.trackId) return;
-        if (!res.ok || !data.url) { setError(data.problem ?? "A picture couldn't be painted."); break; }
-        await preload(data.url);
-        urls.push(data.url);
-        ready([...urls]);
-        try { localStorage.setItem(key, JSON.stringify(urls)); } catch {}
+      const res = await fetch("/api/video", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ trackId: r.trackId, ...r.video }),
+      });
+      const data = await res.json();
+      if (!mine()) return;
+      if (data.image) {
+        await new Promise<void>((ok) => { const i = new Image(); i.onload = i.onerror = () => ok(); i.src = data.image; });
+        if (!mine()) return;
+        setFrame(data.image);
+        onScreen();
       }
+      if (!res.ok || !data.job) { setError(data.problem ?? "The video couldn't be started."); return; }
+
+      // Check on the video every few seconds (they take about 1–3 minutes the first time).
+      for (let i = 0; i < 90; i++) {
+        await new Promise((ok) => setTimeout(ok, i < 3 ? 8000 : 5000));
+        if (!mine()) return;
+        const st = await fetch(`/api/video?job=${encodeURIComponent(data.job)}`).then((x) => x.json());
+        if (!mine()) return;
+        if (st.problem) { setError(st.problem); return; }
+        if (st.done && st.url) {
+          setVideo(st.url);
+          try { localStorage.setItem(key, JSON.stringify({ image: data.image, video: st.url })); } catch {}
+          return;
+        }
+      }
+      setError("The video is taking too long. Try playing the song again later.");
     } catch {
-      setError("The pictures couldn't be painted. Check your connection.");
+      if (mine()) setError("The video couldn't be made. Check your connection.");
     } finally {
-      if (currentTrack.current === r.trackId) setPainting(false);
+      if (mine()) setPainting(false);
     }
   }
 
@@ -165,25 +170,17 @@ export default function Home() {
       spotify.load(r.trackId);
       engineRef.current?.setArt(r.art, 24 * 3600_000);
       currentTrack.current = r.trackId;
-      setPictures([]);
-      setShown({ cur: null, prev: null });
+      setFrame(null);
+      setVideo(null);
+      setVideoReady(false);
       if (engineRef.current) engineRef.current.overlayOn = false;
-      void paint(r);
+      void makeVideo(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
     } finally {
       setLoading(false);
     }
   }
-
-  // Lyric moments follow the song: split its length evenly across the pictures.
-  const momentIdx = pictures.length
-    ? Math.min(pictures.length - 1, duration ? Math.floor((position / duration) * pictures.length) : 0)
-    : -1;
-  const target = momentIdx >= 0 ? pictures[momentIdx] : null;
-  useEffect(() => {
-    setShown((s) => (s.cur === target ? s : { cur: target, prev: s.cur }));
-  }, [target]);
 
   const listening = status?.source === "mic";
   const hide = idle && isFull;
@@ -193,11 +190,22 @@ export default function Home() {
     <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
       <section className="stage" aria-label="Artwork">
         <div className="pulse" ref={pulseRef}>
-          {shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
-          {shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
-          <canvas ref={canvasRef} className={`art${shown.cur ? " over" : ""}`} aria-hidden="true" />
+          {frame && <img key={frame} className="picture" src={frame} alt="" />}
+          {video && (
+            <video
+              key={video}
+              className={`picture clip${videoReady ? " ready" : ""}`}
+              src={video}
+              autoPlay
+              muted
+              loop
+              playsInline
+              onPlaying={() => setVideoReady(true)}
+            />
+          )}
+          <canvas ref={canvasRef} className={`art${frame || video ? " over" : ""}`} aria-hidden="true" />
         </div>
-        {painting && <span className="painting" aria-label="Painting the picture" />}
+        {painting && <span className="painting" aria-label="Making the video" title="Making the video" />}
         {glError && <p className="gl-error">{glError}</p>}
         <header className="stage-top">
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
