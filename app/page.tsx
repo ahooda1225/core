@@ -190,6 +190,11 @@ export default function Home() {
               </span>
             </div>
             <div className="embed" ref={spotify.hostRef} hidden={!result} />
+            {result && (
+              <a className="hint" href={`https://open.spotify.com/track/${result.trackId}`} target="_blank" rel="noreferrer">
+                Player not showing? Open in Spotify ↗
+              </a>
+            )}
             {!preview && (
               <p className="hint">Full songs play only if you&apos;re logged into Spotify in this browser. Otherwise Spotify plays a preview.</p>
             )}

@@ -58,6 +58,7 @@ function loadApi(): Promise<IFrameAPI> {
 export function useSpotify(previewOnly: boolean) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<EmbedController | null>(null);
+  const creating = useRef(false);
   const pendingUri = useRef<string | null>(null);
   const previewRef = useRef(previewOnly);
   const [ready, setReady] = useState(false);
@@ -68,33 +69,10 @@ export function useSpotify(previewOnly: boolean) {
     previewRef.current = previewOnly;
   }, [previewOnly]);
 
+  // Load the API script early so the first song starts fast.
   useEffect(() => {
-    let cancelled = false;
-    loadApi().then((api) => {
-      if (cancelled || !hostRef.current) return;
-      const el = document.createElement("div");
-      hostRef.current.appendChild(el);
-      api.createController(el, { width: "100%", height: 152 }, (c) => {
-        controllerRef.current = c;
-        c.addListener("ready", () => {
-          setReady(true);
-          if (pendingUri.current) {
-            c.loadUri(pendingUri.current);
-            pendingUri.current = null;
-          }
-        });
-        c.addListener("playback_update", ({ data }) => {
-          setState(data);
-          if (!data.isPaused) setEverPlayed(true);
-          if (previewRef.current && !data.isPaused && data.position >= PREVIEW_MS) {
-            c.pause();
-            c.seek(0);
-          }
-        });
-      });
-    });
+    void loadApi();
     return () => {
-      cancelled = true;
       controllerRef.current?.destroy();
       controllerRef.current = null;
     };
@@ -102,16 +80,41 @@ export function useSpotify(previewOnly: boolean) {
 
   const load = useCallback((trackId: string) => {
     const uri = `spotify:track:${trackId}`;
-    const c = controllerRef.current;
     setEverPlayed(false);
-    if (c && ready) {
+    const c = controllerRef.current;
+    if (c) {
       c.loadUri(uri);
-      // Browsers often block autoplay inside the embed; if so, the viewer taps play on it.
-      setTimeout(() => c.play(), 400);
-    } else {
-      pendingUri.current = uri;
+      setTimeout(() => c.play(), 500);
+      return;
     }
-  }, [ready]);
+    pendingUri.current = uri;
+    if (creating.current) return;
+    creating.current = true;
+    // The embed only renders once it has a song, so create it with the first one.
+    loadApi().then((api) => {
+      const host = hostRef.current;
+      if (!host) { creating.current = false; return; }
+      host.innerHTML = "";
+      const el = document.createElement("div");
+      host.appendChild(el);
+      api.createController(el, { uri: pendingUri.current ?? uri, width: "100%", height: 152 }, (ctrl) => {
+        controllerRef.current = ctrl;
+        creating.current = false;
+        setReady(true);
+        ctrl.addListener("ready", () => setTimeout(() => ctrl.play(), 300));
+        ctrl.addListener("playback_update", ({ data }) => {
+          setState(data);
+          if (!data.isPaused) setEverPlayed(true);
+          if (previewRef.current && !data.isPaused && data.position >= PREVIEW_MS) {
+            ctrl.pause();
+            ctrl.seek(0);
+          }
+        });
+        if (pendingUri.current && pendingUri.current !== uri) ctrl.loadUri(pendingUri.current);
+        pendingUri.current = null;
+      });
+    });
+  }, []);
 
   const toggle = useCallback(() => {
     const c = controllerRef.current;
