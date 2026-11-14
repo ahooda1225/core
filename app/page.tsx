@@ -15,7 +15,7 @@ function fmt(ms: number) {
 const Icon = {
   play: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" /></svg>,
   pause: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" /></svg>,
-  mic: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
+  wave: <svg className="wave" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">{["M4 10v4", "M8 6v12", "M12 9v6", "M16 4v16", "M20 10v4"].map((d) => <path key={d} d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />)}</svg>,
   full: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   exit: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   link: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
@@ -32,7 +32,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [song, setSong] = useState<VibeResponse | null>(null);
   const [showEmbed, setShowEmbed] = useState(false);
-  const [picture, setPicture] = useState<string | null>(null);
+  const [pictures, setPictures] = useState<string[]>([]);
+  const [shown, setShown] = useState<{ cur: string | null; prev: string | null }>({ cur: null, prev: null });
   const [painting, setPainting] = useState(false);
   const pulseRef = useRef<HTMLDivElement>(null);
   const currentTrack = useRef("");
@@ -106,30 +107,46 @@ export default function Home() {
     if (!spotify.everPlayed) setTimeout(() => setShowEmbed((v) => v || !spotify.everPlayed), 1800);
   }
 
+  // Paint each lyric moment (first one first), cache the set per song, and show them in order as the song plays.
   async function paint(r: VibeResponse) {
-    const show = (url: string) => {
-      const img = new Image();
-      img.onload = () => {
-        if (currentTrack.current !== r.trackId) return;
-        setPicture(url);
-        if (engineRef.current) engineRef.current.overlayOn = true;
-      };
-      img.src = url;
+    const key = `pics-v2:${r.trackId}`;
+    const ready = (urls: string[]) => {
+      if (currentTrack.current !== r.trackId || urls.length === 0) return;
+      setPictures(urls);
+      if (engineRef.current) engineRef.current.overlayOn = true;
     };
-    let cached: string | null = null;
-    try { cached = localStorage.getItem(`pic:${r.trackId}`); } catch {}
-    if (cached) { show(cached); return; }
-    if (!r.scene || !r.sig) return;
+    const preload = (url: string) =>
+      new Promise<void>((resolve) => { const img = new Image(); img.onload = img.onerror = () => resolve(); img.src = url; });
+
+    let cached: string[] = [];
+    try { cached = JSON.parse(localStorage.getItem(key) ?? "[]"); } catch {}
+    const moments = r.moments ?? [];
+    if (cached.length && cached.length >= moments.length) {
+      await preload(cached[0]);
+      ready(cached);
+      return;
+    }
+    if (!moments.length) return;
+
     setPainting(true);
+    const urls: string[] = [];
     try {
-      const res = await fetch("/api/picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ trackId: r.trackId, scene: r.scene, sig: r.sig }) });
-      const data = await res.json();
-      if (currentTrack.current !== r.trackId) return;
-      if (!res.ok || !data.url) { setError(data.problem ?? "The picture couldn't be painted."); return; }
-      try { localStorage.setItem(`pic:${r.trackId}`, data.url); } catch {}
-      show(data.url);
+      for (const m of moments) {
+        const res = await fetch("/api/picture", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ trackId: r.trackId, scene: m.scene, sig: m.sig }),
+        });
+        const data = await res.json();
+        if (currentTrack.current !== r.trackId) return;
+        if (!res.ok || !data.url) { setError(data.problem ?? "A picture couldn't be painted."); break; }
+        await preload(data.url);
+        urls.push(data.url);
+        ready([...urls]);
+        try { localStorage.setItem(key, JSON.stringify(urls)); } catch {}
+      }
     } catch {
-      setError("The picture couldn't be painted. Check your connection.");
+      setError("The pictures couldn't be painted. Check your connection.");
     } finally {
       if (currentTrack.current === r.trackId) setPainting(false);
     }
@@ -148,7 +165,8 @@ export default function Home() {
       spotify.load(r.trackId);
       engineRef.current?.setArt(r.art, 24 * 3600_000);
       currentTrack.current = r.trackId;
-      setPicture(null);
+      setPictures([]);
+      setShown({ cur: null, prev: null });
       if (engineRef.current) engineRef.current.overlayOn = false;
       void paint(r);
     } catch (e) {
@@ -158,6 +176,15 @@ export default function Home() {
     }
   }
 
+  // Lyric moments follow the song: split its length evenly across the pictures.
+  const momentIdx = pictures.length
+    ? Math.min(pictures.length - 1, duration ? Math.floor((position / duration) * pictures.length) : 0)
+    : -1;
+  const target = momentIdx >= 0 ? pictures[momentIdx] : null;
+  useEffect(() => {
+    setShown((s) => (s.cur === target ? s : { cur: target, prev: s.cur }));
+  }, [target]);
+
   const listening = status?.source === "mic";
   const hide = idle && isFull;
   const pct = duration ? Math.min(100, (position / duration) * 100) : 0;
@@ -166,15 +193,16 @@ export default function Home() {
     <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
       <section className="stage" aria-label="Artwork">
         <div className="pulse" ref={pulseRef}>
-          {picture && <img key={picture} className="picture" src={picture} alt="" />}
-          <canvas ref={canvasRef} className={`art${picture ? " over" : ""}`} aria-hidden="true" />
+          {shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
+          {shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
+          <canvas ref={canvasRef} className={`art${shown.cur ? " over" : ""}`} aria-hidden="true" />
         </div>
         {painting && <span className="painting" aria-label="Painting the picture" />}
         {glError && <p className="gl-error">{glError}</p>}
         <header className="stage-top">
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
           <div className="tools">
-            <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop listening" : "Listen to the room"} title="Listen to the room" onClick={() => void toggleMic()}>{Icon.mic}</button>
+            <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop syncing to the beat" : "Sync to the beat"} title="Sync to the beat" onClick={() => void toggleMic()}>{Icon.wave}</button>
             <button type="button" className="tool" aria-label={isFull ? "Exit full screen" : "Full screen"} title="Full screen (F)" onClick={toggleFull}>{isFull ? Icon.exit : Icon.full}</button>
           </div>
         </header>

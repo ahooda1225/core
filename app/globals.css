@@ -31,6 +31,14 @@ button, input { font: inherit; color: inherit; }
   animation: reveal 2.4s ease both, drift 48s ease-in-out infinite alternate;
   filter: saturate(1.05) contrast(1.03);
 }
+.picture.leaving { animation: leave 2.6s ease both, drift 48s ease-in-out infinite alternate; }
+@keyframes leave { from { opacity: 1; } to { opacity: 0; } }
+.tool.on .wave path { animation: eq 0.9s ease-in-out infinite alternate; transform-origin: center; transform-box: fill-box; }
+.tool.on .wave path:nth-child(2) { animation-delay: -0.3s; }
+.tool.on .wave path:nth-child(3) { animation-delay: -0.6s; }
+.tool.on .wave path:nth-child(4) { animation-delay: -0.15s; }
+.tool.on .wave path:nth-child(5) { animation-delay: -0.45s; }
+@keyframes eq { from { transform: scaleY(0.55); } to { transform: scaleY(1); } }
 @keyframes reveal { from { opacity: 0; filter: blur(14px) saturate(1.05); } to { opacity: 1; filter: blur(0) saturate(1.05) contrast(1.03); } }
 @keyframes drift { from { transform: scale(1) translate(0, 0); } to { transform: scale(1.08) translate(-1.5%, -1%); } }
 .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.45) 100%); }
@@ -96,4 +104,4 @@ button, input { font: inherit; color: inherit; }
   .paste { grid-column: 2; grid-row: 1; width: 150px; }
   .msg { bottom: 140px; }
 }
-@media (prefers-reduced-motion: reduce) { .spin, .painting { animation: none; } .picture { animation: reveal 0.01s both; } }
+@media (prefers-reduced-motion: reduce) { .spin, .painting { animation: none; } .picture, .picture.leaving { animation: reveal 0.01s both; } .tool.on .wave path { animation: none; } }
