@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
+import { signScene } from "@/lib/sign";
+import { unstable_cache } from "next/cache";
 import { parseTrackId } from "@/lib/spotify";
 import { findPinned, PINNED_SONGS } from "@/lib/songs";
 import type { VibeId } from "@/lib/vibes";
@@ -20,9 +22,15 @@ export interface VibeResponse {
   notice?: string;
   /** Why the AI artwork wasn't used, when it wasn't. Shown quietly in the UI. */
   problem?: string;
+  /** Detailed scene for the image generator, plus a signature so /api/picture only paints scenes we wrote. */
+  scene?: string;
+  sig?: string;
 }
 
+
+
 const ArtSchema = z.object({
+  scene: z.string().describe("The picture to paint for this song: a richly detailed prompt for a cinematic image model, 70-120 words. See the scene rules."),
   artist: z.string().describe("The song's artist, or empty string if unknown"),
   name: z.string().describe("2-3 word lowercase name for the artwork, like a playlist title, e.g. 'slow burn neon'"),
   deep: z.string().describe("Darkest background color, hex like #0a0b14. Usually very dark."),
@@ -69,6 +77,10 @@ async function embedArtist(trackId: string): Promise<string> {
   }
 }
 
+// Same song, same artwork: cache the design (one Claude call per song, not per play).
+const designArt = (trackId: string, title: string, artist: string, note?: string) =>
+  unstable_cache(() => designArtNow(title, artist, note), ["art-v1", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
 }
@@ -77,10 +89,12 @@ const SYSTEM = `You design a slow, abstract moving artwork that plays full scree
 
 The artwork is a dark, film-grained field of drifting smoke-like color with soft out-of-focus lights. You choose its colors, light motion, speed and texture. Make it beautiful and tasteful: rich but not garish, with enough contrast between deep and light. Never quote lyrics.
 
+You also write the scene: one extraordinary picture that IS this song. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint it. Be specific and imaginative: the setting, the objects and their textures, what has just happened there, the light source and its color, the weather, the camera (lens, angle, depth of field), the film stock or medium, and the emotional temperature. Make it feel like a still from a beautiful film or a fine-art photograph. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
+
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;
 
-async function designArt(title: string, artist: string, note?: string): Promise<{ artist: string; art: Palette }> {
+async function designArtNow(title: string, artist: string, note?: string): Promise<{ artist: string; art: Palette; scene: string }> {
   const client = new Anthropic();
   const ask = `Song: "${title}"${artist ? ` by ${artist}` : ""}${note ? `\nThe owner pictures this song as: ${note}` : ""}`;
   const response = await client.beta.messages.parse({
@@ -98,6 +112,7 @@ async function designArt(title: string, artist: string, note?: string): Promise<
   if (!colors.every(isHex)) throw new Error("bad colors");
   return {
     artist: o.artist,
+    scene: o.scene.trim().slice(0, 1500),
     art: {
       id: "custom",
       name: o.name.toLowerCase().slice(0, 40),
@@ -154,8 +169,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { artist, art } = await designArt(songTitle, songArtist, pinned?.note);
-    const out: VibeResponse = { ...base, artist: songArtist || artist, source: pinned ? "pinned" : "claude", art };
+    const { artist, art, scene } = await designArt(trackId, songTitle, songArtist, pinned?.note);
+    const out: VibeResponse = {
+      ...base,
+      artist: songArtist || artist,
+      source: pinned ? "pinned" : "claude",
+      art,
+      ...(process.env.FAL_KEY ? { scene, sig: signScene(trackId, scene) } : {}),
+    };
     return Response.json(out);
   } catch (err) {
     let problem = "The AI couldn't design artwork for this song.";

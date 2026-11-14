@@ -32,6 +32,10 @@ export default function Home() {
   const [error, setError] = useState("");
   const [song, setSong] = useState<VibeResponse | null>(null);
   const [showEmbed, setShowEmbed] = useState(false);
+  const [picture, setPicture] = useState<string | null>(null);
+  const [painting, setPainting] = useState(false);
+  const pulseRef = useRef<HTMLDivElement>(null);
+  const currentTrack = useRef("");
   const [idle, setIdle] = useState(false);
   const [isFull, setIsFull] = useState(false);
   const spotify = useSpotify(false);
@@ -43,6 +47,7 @@ export default function Home() {
     try {
       const e = new ArtEngine(canvasRef.current);
       e.onStatus = setStatus;
+      e.pulseEl = pulseRef.current;
       engineRef.current = e;
       return () => e.destroy();
     } catch (err) {
@@ -101,6 +106,35 @@ export default function Home() {
     if (!spotify.everPlayed) setTimeout(() => setShowEmbed((v) => v || !spotify.everPlayed), 1800);
   }
 
+  async function paint(r: VibeResponse) {
+    const show = (url: string) => {
+      const img = new Image();
+      img.onload = () => {
+        if (currentTrack.current !== r.trackId) return;
+        setPicture(url);
+        if (engineRef.current) engineRef.current.overlayOn = true;
+      };
+      img.src = url;
+    };
+    let cached: string | null = null;
+    try { cached = localStorage.getItem(`pic:${r.trackId}`); } catch {}
+    if (cached) { show(cached); return; }
+    if (!r.scene || !r.sig) return;
+    setPainting(true);
+    try {
+      const res = await fetch("/api/picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ trackId: r.trackId, scene: r.scene, sig: r.sig }) });
+      const data = await res.json();
+      if (currentTrack.current !== r.trackId) return;
+      if (!res.ok || !data.url) { setError(data.problem ?? "The picture couldn't be painted."); return; }
+      try { localStorage.setItem(`pic:${r.trackId}`, data.url); } catch {}
+      show(data.url);
+    } catch {
+      setError("The picture couldn't be painted. Check your connection.");
+    } finally {
+      if (currentTrack.current === r.trackId) setPainting(false);
+    }
+  }
+
   async function lookUp(link: string) {
     setError("");
     setLoading(true);
@@ -113,6 +147,10 @@ export default function Home() {
       setUrl("");
       spotify.load(r.trackId);
       engineRef.current?.setArt(r.art, 24 * 3600_000);
+      currentTrack.current = r.trackId;
+      setPicture(null);
+      if (engineRef.current) engineRef.current.overlayOn = false;
+      void paint(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
     } finally {
@@ -127,7 +165,11 @@ export default function Home() {
   return (
     <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
       <section className="stage" aria-label="Artwork">
-        <canvas ref={canvasRef} className="art" aria-hidden="true" />
+        <div className="pulse" ref={pulseRef}>
+          {picture && <img key={picture} className="picture" src={picture} alt="" />}
+          <canvas ref={canvasRef} className={`art${picture ? " over" : ""}`} aria-hidden="true" />
+        </div>
+        {painting && <span className="painting" aria-label="Painting the picture" />}
         {glError && <p className="gl-error">{glError}</p>}
         <header className="stage-top">
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
