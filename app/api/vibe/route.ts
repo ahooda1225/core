@@ -36,10 +36,10 @@ const ArtSchema = z.object({
         scene: z.string().describe("A richly detailed prompt for an illustration model, 60-110 words, painting what the lyrics evoke at this point in the song. See the scene rules."),
       }),
     )
-    .describe("Exactly 3 lyric moments in song order"),
+    .describe("Exactly 1 moment: the one picture for this song"),
   artist: z.string().describe("The song's artist, or empty string if unknown"),
   name: z.string().describe("2-3 word lowercase name for the artwork, like a playlist title, e.g. 'slow burn neon'"),
-  deep: z.string().describe("Darkest background color, hex like #0a0b14. Usually very dark."),
+  deep: z.string().describe("Darkest color of the palette, hex. Dark for night songs, soft and light (e.g. a pale sky blue) for daytime, airy songs."),
   mid: z.string().describe("Main body color of the smoke/color field, hex"),
   light: z.string().describe("Highlight color in the color field, hex"),
   glow: z.string().describe("Color of the out-of-focus lights, hex"),
@@ -85,7 +85,7 @@ async function embedArtist(trackId: string): Promise<string> {
 
 // Same song, same artwork: cache the design (one Claude call per song, not per play).
 const designArt = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => designArtNow(title, artist, note), ["art-v3", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+  unstable_cache(() => designArtNow(title, artist, note), ["art-v5", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
@@ -93,9 +93,11 @@ function preset(id: VibeId): Palette {
 
 const SYSTEM = `You design a slow, abstract moving artwork that plays full screen while a song is on. It replaces the album cover, so it should feel like the song: its themes, what the lyrics are about, its era, sound, and the place and feeling it's known for.
 
-The artwork is a dark, film-grained field of drifting smoke-like color with soft out-of-focus lights. You choose its colors, light motion, speed and texture. Make it beautiful and tasteful: rich but not garish, with enough contrast between deep and light. Never quote lyrics.
+The artwork is a film-grained field of drifting smoke-like color with soft out-of-focus lights. You choose its colors, light motion, speed and texture. Make it beautiful and tasteful: rich but not garish, with enough contrast between deep and light. Never quote lyrics.
 
-You also write the lyric moments: 3 pictures that play in order as the song goes on, one for each part (for example verse, chorus, bridge). Each one paints a specific image the lyrics evoke at that point: the objects, actions, places, weather and feelings named or implied in those lines. Paraphrase the imagery; never quote or write out lyrics. All moments live in one world with one color palette and light, so together they feel like stills from the same film. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint each moment in it. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write every scene for that style — dreamy and illustrated, never photographic — and lean into one surreal touch per scene that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
+You also write the song's one picture (a single moment). Build it from the song's most vivid lyric imagery: the objects, actions, places, weather and feelings named or implied in its lines, combined into one scene. Paraphrase the imagery; never quote or write out lyrics. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint it there.
+
+Match the song's real time of day, weather and energy. Do not default to night, neon, purple or rain: upbeat, light or carefree songs get daylight, open air, wind, sun and bright, airy colors; only songs that are truly late-night or moody get dark scenes. Vary settings and palettes from song to song. When the owner describes how they picture a song, follow their description closely: it overrides your own idea. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write the scene for that style — dreamy and illustrated, never photographic — and lean into one surreal touch that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
 
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;
@@ -118,7 +120,7 @@ async function designArtNow(title: string, artist: string, note?: string): Promi
   if (!colors.every(isHex)) throw new Error("bad colors");
   return {
     artist: o.artist,
-    scenes: o.moments.map((m) => m.scene.trim().slice(0, 1500)).filter(Boolean).slice(0, 3),
+    scenes: o.moments.map((m) => m.scene.trim().slice(0, 1500)).filter(Boolean).slice(0, 1),
     art: {
       id: "custom",
       name: o.name.toLowerCase().slice(0, 40),

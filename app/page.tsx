@@ -109,7 +109,10 @@ export default function Home() {
 
   // Paint each lyric moment (first one first), cache the set per song, and show them in order as the song plays.
   async function paint(r: VibeResponse) {
-    const key = `pics-v2:${r.trackId}`;
+    // Key includes the scenes, so a song whose picture is redesigned gets painted again.
+    let h = 0;
+    for (const ch of (r.moments ?? []).map((m) => m.scene).join("|")) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    const key = `pics-v3:${r.trackId}:${(h >>> 0).toString(36)}`;
     const ready = (urls: string[]) => {
       if (currentTrack.current !== r.trackId || urls.length === 0) return;
       setPictures(urls);

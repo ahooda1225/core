@@ -18,6 +18,14 @@ export interface PinnedSong {
 
 export const PINNED_SONGS: PinnedSong[] = [
   {
+    trackId: "3H6xZgwRZx8McVUJzmMxWe",
+    title: "Headphones On",
+    artist: "Addison Rae",
+    spotifyUrl: "https://open.spotify.com/track/3H6xZgwRZx8McVUJzmMxWe",
+    vibes: ["golden-coast"],
+    note: "Light and outside, daytime. Wind blowing, carefree, wired headphones with the cord swinging in the breeze. Bright and airy, not night or neon.",
+  },
+  {
     trackId: "754kgU5rWscRTfvlsuEwFp",
     title: "", // TODO: fill in the title/artist (not needed for matching, but helps Claude learn your taste)
     artist: "",
