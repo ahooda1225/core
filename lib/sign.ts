@@ -7,4 +7,4 @@ export function signScene(trackId: string, scene: string): string {
 
 /** The one art style every picture is painted in. Change this to restyle the whole site. */
 export const ART_STYLE =
-  "Hand-painted 2D anime film still with a surreal, dreamlike twist: painterly backgrounds, soft cel shading, luminous cinematic lighting, rich atmospheric skies, gentle impossible details (floating objects, otherworldly colors, a world slightly off from ours). Illustrated, not photographic, not photorealistic, not 3D. No text or lettering.";
+  "Cinematic 35mm film photograph with an aesthetic, dreamy mood: soft natural or practical light, visible film grain, slightly faded true-to-life colors, gentle halation, shallow depth of field, candid and lived-in. Often shot first-person POV (the viewer's own hands, knees, dashboard or view ahead). Realistic but soft and moody, like a still from an indie film or a disposable-camera memory; not glossy, not hyperreal, not CGI, not anime or illustration. No text or lettering.";

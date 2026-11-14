@@ -85,7 +85,7 @@ async function embedArtist(trackId: string): Promise<string> {
 
 // Same song, same artwork: cache the design (one Claude call per song, not per play).
 const designArt = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => designArtNow(title, artist, note), ["art-v5", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+  unstable_cache(() => designArtNow(title, artist, note), ["art-v6", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
@@ -97,7 +97,7 @@ The artwork is a film-grained field of drifting smoke-like color with soft out-o
 
 You also write the song's one picture (a single moment). Build it from the song's most vivid lyric imagery: the objects, actions, places, weather and feelings named or implied in its lines, combined into one scene. Paraphrase the imagery; never quote or write out lyrics. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint it there.
 
-Match the song's real time of day, weather and energy. Do not default to night, neon, purple or rain: upbeat, light or carefree songs get daylight, open air, wind, sun and bright, airy colors; only songs that are truly late-night or moody get dark scenes. Vary settings and palettes from song to song. When the owner describes how they picture a song, follow their description closely: it overrides your own idea. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write the scene for that style — dreamy and illustrated, never photographic — and lean into one surreal touch that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
+Match the song's real time of day, weather and energy. Do not default to night, neon, purple or rain: upbeat, light or carefree songs get daylight, open air, wind, sun and bright, airy colors; only songs that are truly late-night or moody get dark scenes. Vary settings and palettes from song to song. When the owner describes how they picture a song, follow their description closely: it overrides your own idea. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write the scene for that style — a real-feeling moment, often first-person POV (what you would see with your own eyes: your hands, your lap, the dashboard, the view ahead) — and add one small dreamy touch that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
 
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;

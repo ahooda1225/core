@@ -23,7 +23,7 @@ export const PINNED_SONGS: PinnedSong[] = [
     artist: "Addison Rae",
     spotifyUrl: "https://open.spotify.com/track/3H6xZgwRZx8McVUJzmMxWe",
     vibes: ["golden-coast"],
-    note: "Light and outside, daytime. Wind blowing, carefree, wired headphones with the cord swinging in the breeze. Bright and airy, not night or neon.",
+    note: "Light and outside, daytime. Wind blowing, carefree, a girl with wired headphones, the cord swinging in the breeze, a cigarette in her hand. Bright and airy, not night or neon.",
   },
   {
     trackId: "754kgU5rWscRTfvlsuEwFp",
@@ -36,8 +36,8 @@ export const PINNED_SONGS: PinnedSong[] = [
   {
     title: "Gasoline",
     artist: "The Weeknd",
-    vibes: ["neon-city", "fog-drive"],
-    note: "Somewhere futuristic. Or a gloomy, foggy, silver morning-dew sky, driving a trap car, the driver has a face tat.",
+    vibes: ["fog-drive"],
+    note: "First-person POV chilling in a parked trap car on a gloomy, foggy, silver morning, dew on the windshield, smoking weed, smoke curling in the car. The driver has a face tat.",
   },
   // TODO: song with the lyric "something bout u that now i can't remember, it's the same damn thing".
   // Fill in title/artist and it'll be pinned to these vibes:
