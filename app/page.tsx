@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSpotify } from "@/components/useSpotify";
+import LoopVideo from "@/components/LoopVideo";
 import { ArtEngine, type EngineStatus } from "@/lib/art-engine";
 import type { VibeResponse } from "./api/vibe/route";
 
@@ -110,7 +111,7 @@ export default function Home() {
 
   // One video per song: paint its first frame, start the video, show the frame while it renders, then swap in the video.
   async function makeVideo(r: VibeResponse) {
-    const key = `vid-v1:${r.trackId}`;
+    const key = `vid-v2:${r.trackId}`;
     const mine = () => currentTrack.current === r.trackId;
     const onScreen = () => { if (engineRef.current) engineRef.current.overlayOn = true; };
 
@@ -192,15 +193,11 @@ export default function Home() {
         <div className="pulse" ref={pulseRef}>
           {frame && <img key={frame} className="picture" src={frame} alt="" />}
           {video && (
-            <video
+            <LoopVideo
               key={video}
               className={`picture clip${videoReady ? " ready" : ""}`}
               src={video}
-              autoPlay
-              muted
-              loop
-              playsInline
-              onPlaying={() => setVideoReady(true)}
+              onReady={() => setVideoReady(true)}
             />
           )}
           <canvas ref={canvasRef} className={`art${frame || video ? " over" : ""}`} aria-hidden="true" />

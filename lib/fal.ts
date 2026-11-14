@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { ART_STYLE } from "./sign";
 
 export const IMAGE_MODEL = "fal-ai/flux-pro/v1.1-ultra";
-export const VIDEO_MODEL = "fal-ai/minimax/hailuo-2.3/standard/image-to-video";
+// Hailuo 02 accepts an end frame: ending on the first frame makes the clip loop seamlessly.
+export const VIDEO_MODEL = "fal-ai/minimax/hailuo-02/standard/image-to-video";
 
 const hash = (s: string) => createHash("sha1").update(s).digest("hex");
 const MONTH = 60 * 60 * 24 * 30;
@@ -32,8 +33,10 @@ async function startVideoNow(imageUrl: string, motion: string): Promise<string> 
   const job = await fal.queue.submit(VIDEO_MODEL, {
     input: {
       image_url: imageUrl,
-      prompt: `${motion} Keep the hand-painted anime look of the image. Slow, dreamy, continuous motion that could loop. No text.`,
+      end_image_url: imageUrl,
+      prompt: `${motion} Keep the hand-painted anime look of the image. Slow, dreamy, continuous motion that drifts away and comes back to the opening frame, so the clip loops seamlessly. No text.`,
       duration: "6",
+      resolution: "768P",
     },
   });
   return job.request_id;
@@ -41,7 +44,7 @@ async function startVideoNow(imageUrl: string, motion: string): Promise<string> 
 
 /** Starts the video job once per song and remembers its id, so replays don't pay again. */
 export const startVideo = (trackId: string, imageUrl: string, motion: string) =>
-  unstable_cache(() => startVideoNow(imageUrl, motion), ["video-job-v1", trackId, hash(imageUrl + motion)], { revalidate: MONTH })();
+  unstable_cache(() => startVideoNow(imageUrl, motion), ["video-job-v2", trackId, hash(imageUrl + motion)], { revalidate: MONTH })();
 
 export async function videoStatus(requestId: string): Promise<{ done: false } | { done: true; url: string }> {
   configure();
