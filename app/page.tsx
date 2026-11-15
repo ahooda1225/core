@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSpotify } from "@/components/useSpotify";
+import { useFollow } from "@/components/useFollow";
 import { ArtEngine, type EngineStatus } from "@/lib/art-engine";
 import type { VibeResponse } from "./api/vibe/route";
 
@@ -18,6 +19,7 @@ const Icon = {
   wave: <svg className="wave" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">{["M4 10v4", "M8 6v12", "M12 9v6", "M16 4v16", "M20 10v4"].map((d) => <path key={d} d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />)}</svg>,
   full: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   exit: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+  spark: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3c.6 3.9 2.1 6.4 6 7.5-3.9 1.1-5.4 3.6-6 7.5-.6-3.9-2.1-6.4-6-7.5 3.9-1.1 5.4-3.6 6-7.5zM19 15c.25 1.6.85 2.5 2.4 3-1.55.5-2.15 1.4-2.4 3-.25-1.6-.85-2.5-2.4-3 1.55-.5 2.15-1.4 2.4-3z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg>,
   link: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
 };
 
@@ -40,8 +42,19 @@ export default function Home() {
   const [idle, setIdle] = useState(false);
   const [isFull, setIsFull] = useState(false);
   const spotify = useSpotify(false);
-  const { isPaused, position, duration } = spotify.state;
-  const playing = !isPaused;
+  const follow = useFollow();
+  const following = follow.connected;
+  // Following: time and play state come from the user's own Spotify; otherwise from the embedded player.
+  const position = following ? follow.progress : spotify.state.position;
+  const duration = following ? follow.now?.durationMs ?? 0 : spotify.state.duration;
+  const playing = following ? !!follow.now?.isPlaying : !spotify.state.isPaused;
+
+  // Picture style: "photo" (Fal paints a film still) or "opus" (Opus draws animated art in code).
+  const [mode, setMode] = useState<"photo" | "opus">("photo");
+  const [opusSvg, setOpusSvg] = useState<string | null>(null);
+  useEffect(() => {
+    try { if (localStorage.getItem("mode") === "opus") setMode("opus"); } catch {}
+  }, []);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -155,23 +168,70 @@ export default function Home() {
     }
   }
 
-  async function lookUp(link: string) {
+  // Opus draws the song as an animated SVG (shown through <img>, so no code from it ever runs).
+  async function drawOpus(r: VibeResponse) {
+    if (!r.opusSig) return;
+    const key = `opus-v1:${r.trackId}`;
+    let cached: string | null = null;
+    try { cached = localStorage.getItem(key); } catch {}
+    if (cached) { setOpusSvg(cached); return; }
+    setPainting(true);
+    try {
+      const res = await fetch("/api/opus-art", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ trackId: r.trackId, title: r.title, artist: r.artist, sig: r.opusSig }),
+      });
+      const data = await res.json();
+      if (currentTrack.current !== r.trackId) return;
+      if (!res.ok || !data.svg) { setError(data.problem ?? "Opus couldn't draw this one."); return; }
+      setOpusSvg(data.svg);
+      try { localStorage.setItem(key, data.svg); } catch {}
+    } catch {
+      if (currentTrack.current === r.trackId) setError("Opus art couldn't load. Check your connection.");
+    } finally {
+      if (currentTrack.current === r.trackId) setPainting(false);
+    }
+  }
+
+  function makeArt(r: VibeResponse, m: "photo" | "opus") {
+    if (m === "opus") void drawOpus(r);
+    else void paint(r);
+  }
+
+  function switchMode() {
+    const m = mode === "photo" ? "opus" : "photo";
+    setMode(m);
+    try { localStorage.setItem("mode", m); } catch {}
+    if (song) makeArt(song, m);
+  }
+
+  // When following Spotify, every new song on the user's phone becomes the new song here.
+  const followedId = following ? follow.now?.id ?? "" : "";
+  useEffect(() => {
+    if (!followedId || followedId === currentTrack.current) return;
+    void lookUp(`https://open.spotify.com/track/${followedId}`, { artist: follow.now?.artists, fromFollow: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followedId]);
+
+  async function lookUp(link: string, opts: { artist?: string; fromFollow?: boolean } = {}) {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link }) });
+      const res = await fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link, artist: opts.artist ?? "" }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong. Try again.");
       const r = data as VibeResponse;
       setSong(r);
       setUrl("");
-      spotify.load(r.trackId);
+      if (!opts.fromFollow) spotify.load(r.trackId);
       engineRef.current?.setArt(r.art, 24 * 3600_000);
       currentTrack.current = r.trackId;
       setPictures([]);
       setShown({ cur: null, prev: null });
+      setOpusSvg(null);
       if (engineRef.current) engineRef.current.overlayOn = false;
-      void paint(r);
+      makeArt(r, mode);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
     } finally {
@@ -188,6 +248,11 @@ export default function Home() {
     setShown((s) => (s.cur === target ? s : { cur: target, prev: s.cur }));
   }, [target]);
 
+  const artOnScreen = (mode === "photo" && !!shown.cur) || (mode === "opus" && !!opusSvg);
+  useEffect(() => {
+    if (engineRef.current) engineRef.current.overlayOn = artOnScreen;
+  }, [artOnScreen]);
+
   const listening = status?.source === "mic";
   const hide = idle && isFull;
   const pct = duration ? Math.min(100, (position / duration) * 100) : 0;
@@ -196,9 +261,10 @@ export default function Home() {
     <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
       <section className="stage" aria-label="Artwork">
         <div className="pulse" ref={pulseRef}>
-          {shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
-          {shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
-          <canvas ref={canvasRef} className={`art${shown.cur ? " over" : ""}`} aria-hidden="true" />
+          {mode === "photo" && shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
+          {mode === "photo" && shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
+          {mode === "opus" && opusSvg && <img key={opusSvg.length} className="picture opus" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(opusSvg)}`} alt="" />}
+          <canvas ref={canvasRef} className={`art${(mode === "photo" && shown.cur) || (mode === "opus" && opusSvg) ? " over" : ""}`} aria-hidden="true" />
         </div>
         {painting && <span className="painting" aria-label="Painting the picture" />}
         {glError && <p className="gl-error">{glError}</p>}
@@ -206,6 +272,7 @@ export default function Home() {
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
           <div className="tools">
             <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop syncing to the beat" : "Sync to the beat"} title="Sync to the beat" onClick={() => void toggleMic()}>{Icon.wave}</button>
+            <button type="button" className={`tool${mode === "opus" ? " on" : ""}`} aria-pressed={mode === "opus"} aria-label={mode === "opus" ? "Switch to photo pictures" : "Switch to Opus art"} title={mode === "opus" ? "Opus art (click for photos)" : "Photo (click for Opus art)"} onClick={switchMode}>{Icon.spark}</button>
             <button type="button" className="tool" aria-label={isFull ? "Exit full screen" : "Full screen"} title="Full screen (F)" onClick={toggleFull}>{isFull ? Icon.exit : Icon.full}</button>
           </div>
         </header>
@@ -216,14 +283,16 @@ export default function Home() {
           <span className="swatch" aria-hidden="true" style={song ? { background: `radial-gradient(circle at 30% 30%, ${song.art.c[3]}, ${song.art.c[2]} 35%, ${song.art.c[1]} 65%, ${song.art.c[0]})` } : undefined} />
           <div className="meta">
             <span className="title">{song?.title ?? "Nothing playing"}</span>
-            <span className="artist">{song ? song.artist : "Paste a Spotify link"}</span>
+            <span className="artist">{song ? song.artist : following ? "Play something on Spotify" : "Paste a Spotify link"}</span>
           </div>
         </div>
 
         <div className="transport">
-          <button type="button" className="play" onClick={playPause} disabled={!song} aria-label={playing ? "Pause" : "Play"}>
-            {playing ? Icon.pause : Icon.play}
-          </button>
+          {!following && (
+            <button type="button" className="play" onClick={playPause} disabled={!song} aria-label={playing ? "Pause" : "Play"}>
+              {playing ? Icon.pause : Icon.play}
+            </button>
+          )}
           <div className="progress">
             <span className="time">{fmt(position)}</span>
             <div
@@ -235,7 +304,7 @@ export default function Home() {
               aria-valuenow={Math.round(position / 1000)}
               tabIndex={song ? 0 : -1}
               onClick={(e) => {
-                if (!duration) return;
+                if (!duration || following) return;
                 const r = e.currentTarget.getBoundingClientRect();
                 spotify.seek(((e.clientX - r.left) / r.width) * (duration / 1000));
               }}
@@ -246,13 +315,24 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="right">
+        {follow.available && (
+          following ? (
+            <button type="button" className="follow on" onClick={follow.stop} title="Stop following Spotify">
+              <span className="dot" aria-hidden="true" /> Following Spotify
+            </button>
+          ) : (
+            <button type="button" className="follow" onClick={follow.start}>Follow Spotify</button>
+          )
+        )}
         <form className="paste" onSubmit={(e) => { e.preventDefault(); if (url.trim()) void lookUp(url.trim()); }}>
           <label htmlFor="song-url" className="sr-only">Spotify song link</label>
           <span className="paste-icon">{Icon.link}</span>
           <input id="song-url" type="url" inputMode="url" placeholder="Spotify link" value={url} onChange={(e) => setUrl(e.target.value)} autoComplete="off" />
           {loading && <span className="spin" aria-label="Loading" />}
         </form>
-        {(error || song?.problem) && <p className="msg" role="alert">{error || song?.problem}</p>}
+        </div>
+        {(error || follow.problem || song?.problem) && <p className="msg" role="alert">{error || follow.problem || song?.problem}</p>}
       </footer>
 
       <div className={`embed${showEmbed ? " show" : ""}`} ref={spotify.hostRef} aria-hidden={!showEmbed} />

@@ -22,6 +22,8 @@ export interface VibeResponse {
   notice?: string;
   /** Why the AI artwork wasn't used, when it wasn't. Shown quietly in the UI. */
   problem?: string;
+  /** Lets /api/opus-art draw this song (and only songs this site looked up). */
+  opusSig?: string;
   /** Lyric moments in song order: a detailed scene for the image generator each, signed so /api/picture only paints scenes we wrote. */
   moments?: { scene: string; sig: string }[];
 }
@@ -158,7 +160,11 @@ export async function POST(req: Request) {
   const pinned = findPinned(trackId, title, givenArtist);
   const songTitle = pinned?.title || title;
   const songArtist = pinned?.artist || givenArtist;
-  const base = { trackId, title: songTitle || "Unknown song" };
+  const base = {
+    trackId,
+    title: songTitle || "Unknown song",
+    ...(songTitle ? { opusSig: signScene(trackId, `opus\n${songTitle}`) } : {}),
+  };
   const fallbackArt = pinned ? preset(pinned.vibes[0]) : preset("rain-window");
 
   if (!songTitle || !process.env.ANTHROPIC_API_KEY) {
