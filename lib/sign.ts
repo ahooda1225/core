@@ -7,4 +7,4 @@ export function signScene(trackId: string, scene: string): string {
 
 /** The one art style every picture is painted in. Change this to restyle the whole site. */
 export const ART_STYLE =
-  "Cinematic film still, shot on 35mm motion picture film: dramatic motivated lighting with rich color, atmospheric haze, shallow depth of field, soft film grain and halation, moody and dreamy, beautifully composed like a frame from an art-house film or a music video. Realistic, not illustration, not CGI, not plastic or over-sharpened. No text or lettering.";
+  "Pink luxury nightlife photography: hot pink, magenta and violet light against deep black shadows, glossy reflections, glamorous and moody, candid like a stylish late-night phone or flash photo or a music-video frame, with motion blur where things move, sparkle and rhinestone highlights, rich saturated color. Realistic photo, not illustration, not CGI, not plastic. No text or lettering.";

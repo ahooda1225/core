@@ -21,7 +21,7 @@ async function paintNow(scene: string): Promise<string> {
 
 // One painting per song: later plays reuse it instead of paying again.
 const paint = (trackId: string, scene: string) =>
-  unstable_cache(() => paintNow(scene), ["picture-v4", trackId, createHash("sha1").update(scene).digest("hex")], {
+  unstable_cache(() => paintNow(scene), ["picture-v5", trackId, createHash("sha1").update(scene).digest("hex")], {
     revalidate: 60 * 60 * 24 * 30,
   })();
 
