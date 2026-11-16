@@ -7,4 +7,4 @@ export function signScene(trackId: string, scene: string): string {
 
 /** The one art style every picture is painted in. Change this to restyle the whole site. */
 export const ART_STYLE =
-  "Luxury nightlife photography: one bold, saturated colored light (the scene's own color) against deep black shadows, glossy reflections, glamorous and moody, candid like a stylish late-night phone or flash photo or a music-video frame, with motion blur where things move, sparkle and rhinestone highlights, rich saturated color. Realistic photo, not illustration, not CGI, not plastic. No text or lettering.";
+  "Glamorous editorial photography: one bold, saturated colored light (the scene's own color) cutting through deep shadows, glossy reflections, glamorous and moody, candid like a stylish late-night phone or flash photo or a music-video frame, with motion blur where things move, sparkle and rhinestone highlights, rich saturated color. Realistic photo, not illustration, not CGI, not plastic. No text or lettering.";
