@@ -115,3 +115,16 @@ export async function nowPlaying(): Promise<NowPlaying | null> {
     at: Date.now(),
   };
 }
+
+export interface QueuedTrack { id: string; name: string; artists: string }
+
+/** The next song in the user's Spotify queue, so its art can be made before it starts. */
+export async function nextInQueue(): Promise<QueuedTrack | null> {
+  const token = await accessToken();
+  if (!token) return null;
+  const res = await fetch("https://api.spotify.com/v1/me/player/queue", { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const d = await res.json();
+  const t = (d?.queue ?? []).find((x: { type?: string; id?: string }) => x?.type === "track" && x.id);
+  return t ? { id: t.id, name: t.name, artists: (t.artists ?? []).map((a: { name: string }) => a.name).join(", ") } : null;
+}

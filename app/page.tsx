@@ -120,33 +120,51 @@ export default function Home() {
     if (!spotify.everPlayed) setTimeout(() => setShowEmbed((v) => v || !spotify.everPlayed), 1800);
   }
 
-  // Paint each lyric moment (first one first), cache the set per song, and show them in order as the song plays.
-  async function paint(r: VibeResponse) {
+  // ---- art fetching (shared by "show now" and "get the next song ready") ----
+  const vibeCache = useRef(new Map<string, Promise<VibeResponse>>());
+  const trackIdOf = (link: string) => link.match(/track[/:]([A-Za-z0-9]{22})/)?.[1] ?? link;
+
+  function fetchVibe(link: string, artist = ""): Promise<VibeResponse> {
+    const id = trackIdOf(link);
+    const hit = vibeCache.current.get(id);
+    if (hit) return hit;
+    const p = fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link, artist }) })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Something went wrong. Try again.");
+        return data as VibeResponse;
+      });
+    vibeCache.current.set(id, p);
+    p.catch(() => vibeCache.current.delete(id));
+    return p;
+  }
+
+  const picKey = (r: VibeResponse) => {
     // Key includes the scenes, so a song whose picture is redesigned gets painted again.
     let h = 0;
     for (const ch of (r.moments ?? []).map((m) => m.scene).join("|")) h = (h * 31 + ch.charCodeAt(0)) | 0;
-    const key = `pics-v3:${r.trackId}:${(h >>> 0).toString(36)}`;
-    const ready = (urls: string[]) => {
-      if (currentTrack.current !== r.trackId || urls.length === 0) return;
-      setPictures(urls);
-      if (engineRef.current) engineRef.current.overlayOn = true;
-    };
-    const preload = (url: string) =>
-      new Promise<void>((resolve) => { const img = new Image(); img.onload = img.onerror = () => resolve(); img.src = url; });
+    return `pics-v3:${r.trackId}:${(h >>> 0).toString(36)}`;
+  };
+  const preload = (url: string) =>
+    new Promise<void>((resolve) => { const img = new Image(); img.onload = img.onerror = () => resolve(); img.src = url; });
+  const inflight = useRef(new Map<string, Promise<unknown>>());
+  function once<T>(key: string, make: () => Promise<T>): Promise<T> {
+    const hit = inflight.current.get(key) as Promise<T> | undefined;
+    if (hit) return hit;
+    const p = make().finally(() => inflight.current.delete(key));
+    inflight.current.set(key, p);
+    return p;
+  }
 
-    let cached: string[] = [];
-    try { cached = JSON.parse(localStorage.getItem(key) ?? "[]"); } catch {}
-    const moments = r.moments ?? [];
-    if (cached.length && cached.length >= moments.length) {
-      await preload(cached[0]);
-      ready(cached);
-      return;
-    }
-    if (!moments.length) return;
-
-    setPainting(true);
-    const urls: string[] = [];
-    try {
+  /** The song's picture(s): from this browser's cache, or painted now. Throws a readable message on failure. */
+  function getPictures(r: VibeResponse): Promise<string[]> {
+    const key = picKey(r);
+    return once(key, async () => {
+      let cached: string[] = [];
+      try { cached = JSON.parse(localStorage.getItem(key) ?? "[]"); } catch {}
+      const moments = r.moments ?? [];
+      if (cached.length && cached.length >= moments.length) { await preload(cached[0]); return cached; }
+      const urls: string[] = [];
       for (const m of moments) {
         const res = await fetch("/api/picture", {
           method: "POST",
@@ -154,15 +172,40 @@ export default function Home() {
           body: JSON.stringify({ trackId: r.trackId, scene: m.scene, sig: m.sig }),
         });
         const data = await res.json();
-        if (currentTrack.current !== r.trackId) return;
-        if (!res.ok || !data.url) { setError(data.problem ?? "A picture couldn't be painted."); break; }
+        if (!res.ok || !data.url) throw new Error(data.problem ?? "A picture couldn't be painted.");
         await preload(data.url);
         urls.push(data.url);
-        ready([...urls]);
         try { localStorage.setItem(key, JSON.stringify(urls)); } catch {}
       }
-    } catch {
-      setError("The pictures couldn't be painted. Check your connection.");
+      return urls;
+    });
+  }
+
+  /** The song's Opus art: from this browser's cache, or drawn now. */
+  function getOpus(r: VibeResponse): Promise<string | null> {
+    const key = `opus-v2:${r.trackId}`;
+    return once(key, async () => {
+      if (!r.opusSig) return null;
+      try { const c = localStorage.getItem(key); if (c) return c; } catch {}
+      const res = await fetch("/api/opus-art", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ trackId: r.trackId, title: r.title, artist: r.artist, sig: r.opusSig }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.svg) throw new Error(data.problem ?? "Opus couldn't draw this one.");
+      try { localStorage.setItem(key, data.svg); } catch {}
+      return data.svg as string;
+    });
+  }
+
+  async function paint(r: VibeResponse) {
+    setPainting(true);
+    try {
+      const urls = await getPictures(r);
+      if (currentTrack.current === r.trackId && urls.length) setPictures(urls);
+    } catch (e) {
+      if (currentTrack.current === r.trackId) setError(e instanceof Error ? e.message : "The picture couldn't be painted.");
     } finally {
       if (currentTrack.current === r.trackId) setPainting(false);
     }
@@ -170,29 +213,29 @@ export default function Home() {
 
   // Opus draws the song as an animated SVG (shown through <img>, so no code from it ever runs).
   async function drawOpus(r: VibeResponse) {
-    if (!r.opusSig) return;
-    const key = `opus-v2:${r.trackId}`;
-    let cached: string | null = null;
-    try { cached = localStorage.getItem(key); } catch {}
-    if (cached) { setOpusSvg(cached); return; }
     setPainting(true);
     try {
-      const res = await fetch("/api/opus-art", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ trackId: r.trackId, title: r.title, artist: r.artist, sig: r.opusSig }),
-      });
-      const data = await res.json();
-      if (currentTrack.current !== r.trackId) return;
-      if (!res.ok || !data.svg) { setError(data.problem ?? "Opus couldn't draw this one."); return; }
-      setOpusSvg(data.svg);
-      try { localStorage.setItem(key, data.svg); } catch {}
-    } catch {
-      if (currentTrack.current === r.trackId) setError("Opus art couldn't load. Check your connection.");
+      const svg = await getOpus(r);
+      if (currentTrack.current === r.trackId && svg) setOpusSvg(svg);
+    } catch (e) {
+      if (currentTrack.current === r.trackId) setError(e instanceof Error ? e.message : "Opus art couldn't load.");
     } finally {
       if (currentTrack.current === r.trackId) setPainting(false);
     }
   }
+
+  // Get the next song in the Spotify queue ready while this one plays, so the switch is instant.
+  const nextId = following ? follow.next?.id ?? "" : "";
+  useEffect(() => {
+    if (!nextId) return;
+    const t = setTimeout(() => {
+      void fetchVibe(`https://open.spotify.com/track/${nextId}`, follow.next?.artists ?? "")
+        .then((r): Promise<unknown> => (mode === "opus" ? getOpus(r) : getPictures(r)))
+        .catch(() => {});
+    }, 8000); // wait a little in case people are skipping around
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextId, mode]);
 
   function makeArt(r: VibeResponse, m: "photo" | "opus") {
     if (m === "opus") void drawOpus(r);
@@ -218,10 +261,7 @@ export default function Home() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link, artist: opts.artist ?? "" }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Something went wrong. Try again.");
-      const r = data as VibeResponse;
+      const r = await fetchVibe(link, opts.artist ?? "");
       setSong(r);
       setUrl("");
       if (!opts.fromFollow) spotify.load(r.trackId);
