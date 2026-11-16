@@ -183,7 +183,7 @@ export default function Home() {
 
   /** The song's Opus art: from this browser's cache, or drawn now. */
   function getOpus(r: VibeResponse): Promise<string | null> {
-    const key = `opus-v2:${r.trackId}`;
+    const key = `opus-v3:${r.trackId}`;
     return once(key, async () => {
       if (!r.opusSig) return null;
       try { const c = localStorage.getItem(key); if (c) return c; } catch {}
@@ -290,8 +290,11 @@ export default function Home() {
 
   const artOnScreen = (mode === "photo" && !!shown.cur) || (mode === "opus" && !!opusSvg);
   useEffect(() => {
-    if (engineRef.current) engineRef.current.overlayOn = artOnScreen;
-  }, [artOnScreen]);
+    if (!engineRef.current) return;
+    engineRef.current.overlayOn = artOnScreen;
+    // Opus art stands on its own: no soft lights over it, just grain and the beat pulse.
+    engineRef.current.lightsOff = mode === "opus" && artOnScreen;
+  }, [artOnScreen, mode]);
 
   const listening = status?.source === "mic";
   const hide = idle && isFull;

@@ -9,7 +9,7 @@ export { PALETTES, type Palette };
 const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
 const FS = `
 precision highp float;
-uniform vec2 res; uniform float t, energy, pulse, mode, multi, film, mono, glow, overlay;
+uniform vec2 res; uniform float t, energy, pulse, mode, multi, film, mono, glow, overlay, lights;
 uniform vec3 c0, c1, c2, c3;
 float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -58,7 +58,7 @@ void main(){
   col = mix(col, voidCol, mono);
   float g = h(gl_FragCoord.xy + fract(t*7.)*100.) - .5;
   // over a painted picture: only the lights, the beat bloom and grain (screen-blended by CSS)
-  vec3 lightsOnly = b * (1. + pulse*.6) * .8 + c3 * .1 * pulse * smoothstep(1.2, 0., length(p - vec2(.3, .25))) + abs(g) * .05;
+  vec3 lightsOnly = b * lights * (1. + pulse*.6) * .8 + c3 * .1 * pulse * smoothstep(1.2, 0., length(p - vec2(.3, .25))) + abs(g) * .05;
   col = mix(col, lightsOnly, overlay);
   col += g * (film > .5 ? .07 : .045);
   gl_FragColor = vec4(col, 1.);
@@ -98,6 +98,8 @@ export class ArtEngine {
   playingHint = false;
   /** When a painted picture is showing, draw only lights and grain on top of it. */
   overlayOn = false;
+  /** Hide the soft out-of-focus lights (keeps grain and the beat pulse). */
+  lightsOff = false;
   /** Element that gets the beat zoom (defaults to the canvas). */
   pulseEl: HTMLElement | null = null;
 
@@ -136,7 +138,7 @@ export class ArtEngine {
     const loc = gl.getAttribLocation(prog, "p");
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    for (const k of ["res", "t", "energy", "pulse", "mode", "multi", "film", "mono", "glow", "overlay", "c0", "c1", "c2", "c3"]) this.U[k] = gl.getUniformLocation(prog, k);
+    for (const k of ["res", "t", "energy", "pulse", "mode", "multi", "film", "mono", "glow", "overlay", "lights", "c0", "c1", "c2", "c3"]) this.U[k] = gl.getUniformLocation(prog, k);
     this.resize = this.resize.bind(this);
     addEventListener("resize", this.resize);
     this.resize();
@@ -328,6 +330,7 @@ export class ArtEngine {
     gl.uniform1f(U.glow, cur.glow);
     this.cur.overlay += ((this.overlayOn ? 1 : 0) - this.cur.overlay) * Math.min(1, dt * 1.5);
     gl.uniform1f(U.overlay, this.cur.overlay);
+    gl.uniform1f(U.lights, this.lightsOff ? 0 : 1);
     gl.uniform3fv(U.c0, cur.c[0]);
     gl.uniform3fv(U.c1, cur.c[1]);
     gl.uniform3fv(U.c2, cur.c[2]);
