@@ -17,6 +17,7 @@ const Icon = {
   play: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" /></svg>,
   pause: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" /></svg>,
   wave: <svg className="wave" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">{["M4 10v4", "M8 6v12", "M12 9v6", "M16 4v16", "M20 10v4"].map((d) => <path key={d} d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />)}</svg>,
+  pencil: <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   full: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   exit: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   link: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
@@ -117,11 +118,16 @@ export default function Home() {
   const vibeCache = useRef(new Map<string, Promise<VibeResponse>>());
   const trackIdOf = (link: string) => link.match(/track[/:]([A-Za-z0-9]{22})/)?.[1] ?? link;
 
+  // Feedback hints are saved per song, so a repainted song keeps its fixed picture.
+  const hintFor = (id: string) => { try { return localStorage.getItem(`hint:${id}`) ?? ""; } catch { return ""; } };
+
   function fetchVibe(link: string, artist = ""): Promise<VibeResponse> {
-    const id = trackIdOf(link);
+    const tid = trackIdOf(link);
+    const hint = hintFor(tid);
+    const id = `${tid}|${hint}`;
     const hit = vibeCache.current.get(id);
     if (hit) return hit;
-    const p = fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link, artist }) })
+    const p = fetch("/api/vibe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: link, artist, hint }) })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Something went wrong. Try again.");
@@ -208,7 +214,18 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followedId]);
 
-  async function lookUp(link: string, opts: { artist?: string; fromFollow?: boolean } = {}) {
+  // Repaint the current song's picture with the owner's feedback.
+  const [hintOpen, setHintOpen] = useState(false);
+  const [hintText, setHintText] = useState("");
+  async function repaint(e: React.FormEvent) {
+    e.preventDefault();
+    if (!song || !hintText.trim()) return;
+    try { localStorage.setItem(`hint:${song.trackId}`, hintText.trim()); } catch {}
+    setHintOpen(false);
+    await lookUp(`https://open.spotify.com/track/${song.trackId}`, { artist: song.artist, fromFollow: true, keepPicture: true });
+  }
+
+  async function lookUp(link: string, opts: { artist?: string; fromFollow?: boolean; keepPicture?: boolean } = {}) {
     setError("");
     setLoading(true);
     try {
@@ -218,9 +235,11 @@ export default function Home() {
       if (!opts.fromFollow) spotify.load(r.trackId);
       engineRef.current?.setArt(r.art, 24 * 3600_000);
       currentTrack.current = r.trackId;
-      setPictures([]);
-      setShown({ cur: null, prev: null });
-      if (engineRef.current) engineRef.current.overlayOn = false;
+      if (!opts.keepPicture) {
+        setPictures([]);
+        setShown({ cur: null, prev: null });
+      }
+      if (engineRef.current && !opts.keepPicture) engineRef.current.overlayOn = false;
       void paint(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
@@ -263,9 +282,31 @@ export default function Home() {
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
           <div className="tools">
             <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop syncing to the beat" : "Sync to the beat"} title="Sync to the beat" onClick={() => void toggleMic()}>{Icon.wave}</button>
+            {song && (
+              <button type="button" className={`tool${hintOpen ? " on" : ""}`} aria-expanded={hintOpen} aria-label="Change this picture" title="Change this picture" onClick={() => { setHintText(hintFor(song.trackId)); setHintOpen((v) => !v); }}>{Icon.pencil}</button>
+            )}
             <button type="button" className="tool" aria-label={isFull ? "Exit full screen" : "Full screen"} title="Full screen (F)" onClick={toggleFull}>{isFull ? Icon.exit : Icon.full}</button>
           </div>
         </header>
+        {hintOpen && song && (
+          <form className="hint-box" onSubmit={(e) => void repaint(e)} onKeyDown={(e) => { if (e.key === "Escape") setHintOpen(false); }}>
+            <label htmlFor="hint-input" className="hint-label">What should change?</label>
+            <textarea
+              id="hint-input"
+              rows={2}
+              maxLength={300}
+              autoFocus
+              placeholder="e.g. more hype, a car full of friends, daytime"
+              value={hintText}
+              onChange={(e) => setHintText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+            />
+            <div className="hint-actions">
+              <button type="button" className="hint-cancel" onClick={() => setHintOpen(false)}>Cancel</button>
+              <button type="submit" className="hint-go" disabled={!hintText.trim()}>Repaint</button>
+            </div>
+          </form>
+        )}
       </section>
 
       <footer className="bar" aria-label="Now playing">

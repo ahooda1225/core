@@ -84,8 +84,8 @@ async function embedArtist(trackId: string): Promise<string> {
 }
 
 // Same song, same artwork: cache the design (one Claude call per song, not per play).
-const designArt = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => designArtNow(title, artist, note), ["art-v10", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+const designArt = (trackId: string, title: string, artist: string, note?: string, hint?: string) =>
+  unstable_cache(() => designArtNow(title, artist, note, hint), ["art-v10", trackId, title, artist, note ?? "", hint ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
@@ -104,9 +104,9 @@ Get the song right first. If you don't know this exact song well, don't guess fr
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;
 
-async function designArtNow(title: string, artist: string, note?: string): Promise<{ artist: string; art: Palette; scenes: string[] }> {
+async function designArtNow(title: string, artist: string, note?: string, hint?: string): Promise<{ artist: string; art: Palette; scenes: string[] }> {
   const client = new Anthropic();
-  const ask = `Song: "${title}"${artist ? ` by ${artist}` : ""}${note ? `\nThe owner pictures this song as: ${note}` : ""}`;
+  const ask = `Song: "${title}"${artist ? ` by ${artist}` : ""}${note ? `\nThe owner pictures this song as: ${note}` : ""}${hint ? `\nThe owner didn't like the last picture for this song. Their feedback, which you must follow: ${hint}` : ""}`;
   const response = await client.beta.messages.parse({
     model: "claude-opus-5-5",
     max_tokens: 2000,
@@ -138,7 +138,7 @@ async function designArtNow(title: string, artist: string, note?: string): Promi
 }
 
 export async function POST(req: Request) {
-  let body: { url?: string; artist?: string };
+  let body: { url?: string; artist?: string; hint?: string };
   try {
     body = await req.json();
   } catch {
@@ -179,7 +179,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { artist, art, scenes } = await designArt(trackId, songTitle, songArtist, pinned?.note);
+    const hint = (body.hint ?? "").trim().slice(0, 300) || undefined;
+    const { artist, art, scenes } = await designArt(trackId, songTitle, songArtist, pinned?.note, hint);
     const out: VibeResponse = {
       ...base,
       artist: songArtist || artist,
