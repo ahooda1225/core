@@ -7,14 +7,17 @@ export const runtime = "nodejs";
 // Drawing a whole animated piece takes Opus a minute or two.
 export const maxDuration = 300;
 
-const SYSTEM = `You are a generative artist. You draw one animated SVG artwork that plays full screen on a big TV at a party, as the backdrop for a song.
+const SYSTEM = `You are an abstract generative artist. You make one animated SVG artwork that plays full screen on a big TV at a party, as the backdrop for a song.
 
-What to draw: the song's world and lyric imagery (paraphrased in shapes, never written out), in a bold, poster-like illustrated style. It must be striking from across a room: one clear focal point, strong composition, depth built from layered shapes and gradients, luminous saturated color that glows in a dim room, and a few delightful details for anyone who looks closer. Motion is slow and hypnotic overall, with one or two livelier elements (twinkles, drifting particles, swaying, light sweeps). Match the song's real time of day, weather and energy. When the owner describes how they picture the song, follow it.
+Make it abstract: no objects, no scenes, no figures, no symbols, no icons, nothing literal from the title or lyrics (no microphones, hearts, stars, roses, cars, faces, notes). Translate the song into pure visual language instead: color, light, shape, rhythm, texture and movement. Think gallery-grade generative art or a beautiful album cover: soft glowing gradient fields and color blooms, large flowing organic forms or bold geometric planes, light beams and halos, fine line work, layered translucent shapes, grain-like texture made from small dots.
+
+Translate the song: its mood sets the palette and temperature; its tempo sets how fast things move; its emotional arc sets the composition (calm and wide, tense and angular, euphoric and radiant, melancholic and drifting). Match the song's real time of day and energy. Make it striking from across a room: one clear area of focus, generous negative space, luminous color that glows on a TV in a dim room, and subtle details that reward a closer look. Motion is slow, hypnotic and continuous, with one livelier layer (a breathing glow, drifting particles, a slow light sweep, rotating rings). Use a refined, harmonious palette of 3 to 5 colors. Avoid anything cartoony, clip-art or childish. When the owner describes how they picture the song, take its colors, light and feeling, not its objects.
 
 Technical rules (strict):
 - Output only the SVG markup: start with <svg and end with </svg>. No code fences, no commentary.
 - <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
 - Fully self-contained: no <script>, no event attributes, no <foreignObject>, no <image>, no external URLs, no web fonts, no <text>.
+- Blend modes (mix-blend-mode: screen, plus-lighter) and radial gradients are encouraged for glow.
 - Animate with CSS @keyframes in one <style> block (and SMIL if needed). Animate transform and opacity; never animate filters. Use transform-box: fill-box and transform-origin for rotations and scales.
 - Every animation is infinite and loops seamlessly: durations that divide 24s, alternate or matching start and end states.
 - Keep it efficient: under about 45KB and about 400 elements; at most two blur filters, applied to static shapes.`;
@@ -49,7 +52,7 @@ async function drawNow(title: string, artist: string, note?: string): Promise<st
 }
 
 const draw = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => drawNow(title, artist, note), ["opus-art-v1", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+  unstable_cache(() => drawNow(title, artist, note), ["opus-art-v2", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 export async function POST(req: Request) {
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ problem: "The site has no ANTHROPIC_API_KEY." }, { status: 503 });

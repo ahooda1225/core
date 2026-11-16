@@ -171,7 +171,7 @@ export default function Home() {
   // Opus draws the song as an animated SVG (shown through <img>, so no code from it ever runs).
   async function drawOpus(r: VibeResponse) {
     if (!r.opusSig) return;
-    const key = `opus-v1:${r.trackId}`;
+    const key = `opus-v2:${r.trackId}`;
     let cached: string | null = null;
     try { cached = localStorage.getItem(key); } catch {}
     if (cached) { setOpusSvg(cached); return; }
