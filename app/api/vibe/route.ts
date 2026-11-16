@@ -22,8 +22,6 @@ export interface VibeResponse {
   notice?: string;
   /** Why the AI artwork wasn't used, when it wasn't. Shown quietly in the UI. */
   problem?: string;
-  /** Lets /api/opus-art draw this song (and only songs this site looked up). */
-  opusSig?: string;
   /** Lyric moments in song order: a detailed scene for the image generator each, signed so /api/picture only paints scenes we wrote. */
   moments?: { scene: string; sig: string }[];
 }
@@ -87,7 +85,7 @@ async function embedArtist(trackId: string): Promise<string> {
 
 // Same song, same artwork: cache the design (one Claude call per song, not per play).
 const designArt = (trackId: string, title: string, artist: string, note?: string) =>
-  unstable_cache(() => designArtNow(title, artist, note), ["art-v8", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
+  unstable_cache(() => designArtNow(title, artist, note), ["art-v9", trackId, title, artist, note ?? ""], { revalidate: 60 * 60 * 24 * 30 })();
 
 function preset(id: VibeId): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[1];
@@ -97,9 +95,11 @@ const SYSTEM = `You design a slow, abstract moving artwork that plays full scree
 
 The artwork is a film-grained field of drifting smoke-like color with soft out-of-focus lights. You choose its colors, light motion, speed and texture. Make it beautiful and tasteful: rich but not garish, with enough contrast between deep and light. Never quote lyrics.
 
-You also write the song's one picture (a single moment). Its job: it is the backdrop for the song on a big TV at a party, full screen for the whole song. People see it from across the room between conversations, so it has to be striking at a glance and still rewarding when someone stops to look. That means one bold, clear focal point and a strong composition; depth and a sense of place; luminous, saturated light and color that glows in a dim room (never murky, muddy or underexposed); and a few delightful details to discover up close. It should make someone say "wait, look at the TV." Skip tiny clutter, busy noise and anything that only reads up close. Build it from the song's most vivid lyric imagery: the objects, actions, places, weather and feelings named or implied in its lines, combined into one scene. Paraphrase the imagery; never quote or write out lyrics. First ask yourself what world the song lives in — a real room at 2am, a pink planet, a flooded ballroom, a summer that never ended — then paint it there.
+You also write the song's one picture (a single moment). It is the backdrop for the song on a big TV at a party, full screen for the whole song, so it needs a strong, simple composition that reads from across the room and rich but believable color. Build it from the song's most specific lyric imagery: the objects, actions, places, weather and feelings named or implied in its lines. Paraphrase; never quote or write out lyrics. First ask what world the song lives in, then find one real, specific place and moment in it.
 
-Match the song's real time of day, weather and energy. Do not default to night, neon, purple or rain: upbeat, light or carefree songs get daylight, open air, wind, sun and bright, airy colors; only songs that are truly late-night or moody get dark scenes. Vary settings and palettes from song to song. When the owner describes how they picture a song, follow their description closely: it overrides your own idea. Be specific and imaginative: the setting, the objects, what has just happened there, the light source and its color, the sky and weather, the framing, and the emotional temperature. The art style is fixed: ${ART_STYLE} Write the scene for that style as a real-feeling moment and add one small dreamy touch. Choose the framing that suits this song — a wide view of a place, a landscape, an empty room full of clues, a figure seen from behind, or a close-up detail. Use first-person POV only when the song or the owner calls for it, and show hands only when they hold something that matters to the story; most pictures should have no hands at all that fits the lyrics. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (hands, silhouettes, from behind, out of focus) or leave them out and let the objects tell the story.
+What makes it great is restraint and specificity, like a photo a real photographer took, not an AI picture. One idea, a few well-chosen elements, an ordinary place made beautiful by light and timing (a laundromat at 4pm, a motel pool, a stairwell, a highway shoulder, a kitchen after a party), honest imperfections, and an unexpected but natural framing. Banned clichés that make pictures look like AI slop: fairy lights or string lights, glowing orbs or bokeh balls, floating particles, bubbles, lens flares, sunset silhouettes with palm trees, a person with arms spread wide, candles everywhere, everything glowing at once, symmetrical centered postcard compositions, and stacking many pretty effects in one picture.
+
+Match the song's real time of day, weather and energy. Don't default to night, neon, purple, sunsets or rain: upbeat, carefree songs get plain daylight and open air; only truly late-night or moody songs get dark scenes. Vary settings and palettes from song to song. When the owner describes how they picture a song, follow their description closely: it overrides your own idea. Describe concretely: the place, the few objects that matter, what has just happened, the light source and its color, the weather, and the framing. The art style is fixed: ${ART_STYLE} Choose the framing that suits this song — a wide view of a place, an empty room full of clues, a figure seen from behind or far away, or a close-up detail. Use first-person POV only when the song or the owner calls for it, and show hands only when they hold something that matters. Rules: landscape composition with a quieter lower third; no text, letters, logos, album covers or screens with writing; no real or famous people — show people only anonymously (from behind, far away, out of focus) or leave them out and let the place tell the story.
 
 Examples of the owner's taste (song → how they picture it):
 ${PINNED_SONGS.map((s) => `- ${s.title ? `"${s.title}" by ${s.artist}` : "a song"}: ${s.note}`).join("\n")}`;
@@ -160,11 +160,7 @@ export async function POST(req: Request) {
   const pinned = findPinned(trackId, title, givenArtist);
   const songTitle = pinned?.title || title;
   const songArtist = pinned?.artist || givenArtist;
-  const base = {
-    trackId,
-    title: songTitle || "Unknown song",
-    ...(songTitle ? { opusSig: signScene(trackId, `opus\n${songTitle}`) } : {}),
-  };
+  const base = { trackId, title: songTitle || "Unknown song" };
   const fallbackArt = pinned ? preset(pinned.vibes[0]) : preset("rain-window");
 
   if (!songTitle || !process.env.ANTHROPIC_API_KEY) {

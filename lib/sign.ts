@@ -7,4 +7,4 @@ export function signScene(trackId: string, scene: string): string {
 
 /** The one art style every picture is painted in. Change this to restyle the whole site. */
 export const ART_STYLE =
-  "Cinematic 35mm film photograph with an aesthetic, dreamy mood: soft natural or practical light, visible film grain, slightly faded true-to-life colors, gentle halation, shallow depth of field, candid and lived-in. Framing varies: wide establishing shots, landscapes, quiet empty rooms, over-the-shoulder views, close-up details. Bold, readable composition with luminous light that glows on a TV screen. Realistic but soft and atmospheric, like a still from an indie film or a disposable-camera memory; not glossy, not hyperreal, not CGI, not anime or illustration. No text or lettering.";
+  "Unretouched 35mm color film photograph, the kind a fine-art photographer takes: natural or practical light, real film grain, believable color with gentle film tones (in the spirit of Kodak Portra), honest imperfections, slight softness, true-to-life skin and materials. Restrained and specific, not glossy, not HDR, not oversaturated, not CGI, not illustration. No text or lettering.";

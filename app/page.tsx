@@ -19,7 +19,6 @@ const Icon = {
   wave: <svg className="wave" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">{["M4 10v4", "M8 6v12", "M12 9v6", "M16 4v16", "M20 10v4"].map((d) => <path key={d} d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />)}</svg>,
   full: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
   exit: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>,
-  spark: <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3c.6 3.9 2.1 6.4 6 7.5-3.9 1.1-5.4 3.6-6 7.5-.6-3.9-2.1-6.4-6-7.5 3.9-1.1 5.4-3.6 6-7.5zM19 15c.25 1.6.85 2.5 2.4 3-1.55.5-2.15 1.4-2.4 3-.25-1.6-.85-2.5-2.4-3 1.55-.5 2.15-1.4 2.4-3z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg>,
   link: <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>,
 };
 
@@ -49,12 +48,6 @@ export default function Home() {
   const duration = following ? follow.now?.durationMs ?? 0 : spotify.state.duration;
   const playing = following ? !!follow.now?.isPlaying : !spotify.state.isPaused;
 
-  // Picture style: "photo" (Fal paints a film still) or "opus" (Opus draws animated art in code).
-  const [mode, setMode] = useState<"photo" | "opus">("photo");
-  const [opusSvg, setOpusSvg] = useState<string | null>(null);
-  useEffect(() => {
-    try { if (localStorage.getItem("mode") === "opus") setMode("opus"); } catch {}
-  }, []);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -181,24 +174,6 @@ export default function Home() {
     });
   }
 
-  /** The song's Opus art: from this browser's cache, or drawn now. */
-  function getOpus(r: VibeResponse): Promise<string | null> {
-    const key = `opus-v3:${r.trackId}`;
-    return once(key, async () => {
-      if (!r.opusSig) return null;
-      try { const c = localStorage.getItem(key); if (c) return c; } catch {}
-      const res = await fetch("/api/opus-art", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ trackId: r.trackId, title: r.title, artist: r.artist, sig: r.opusSig }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.svg) throw new Error(data.problem ?? "Opus couldn't draw this one.");
-      try { localStorage.setItem(key, data.svg); } catch {}
-      return data.svg as string;
-    });
-  }
-
   async function paint(r: VibeResponse) {
     setPainting(true);
     try {
@@ -211,43 +186,19 @@ export default function Home() {
     }
   }
 
-  // Opus draws the song as an animated SVG (shown through <img>, so no code from it ever runs).
-  async function drawOpus(r: VibeResponse) {
-    setPainting(true);
-    try {
-      const svg = await getOpus(r);
-      if (currentTrack.current === r.trackId && svg) setOpusSvg(svg);
-    } catch (e) {
-      if (currentTrack.current === r.trackId) setError(e instanceof Error ? e.message : "Opus art couldn't load.");
-    } finally {
-      if (currentTrack.current === r.trackId) setPainting(false);
-    }
-  }
-
   // Get the next song in the Spotify queue ready while this one plays, so the switch is instant.
   const nextId = following ? follow.next?.id ?? "" : "";
   useEffect(() => {
     if (!nextId) return;
     const t = setTimeout(() => {
       void fetchVibe(`https://open.spotify.com/track/${nextId}`, follow.next?.artists ?? "")
-        .then((r): Promise<unknown> => (mode === "opus" ? getOpus(r) : getPictures(r)))
+        .then((r) => getPictures(r))
         .catch(() => {});
     }, 8000); // wait a little in case people are skipping around
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextId, mode]);
+  }, [nextId]);
 
-  function makeArt(r: VibeResponse, m: "photo" | "opus") {
-    if (m === "opus") void drawOpus(r);
-    else void paint(r);
-  }
-
-  function switchMode() {
-    const m = mode === "photo" ? "opus" : "photo";
-    setMode(m);
-    try { localStorage.setItem("mode", m); } catch {}
-    if (song) makeArt(song, m);
-  }
 
   // When following Spotify, every new song on the user's phone becomes the new song here.
   const followedId = following ? follow.now?.id ?? "" : "";
@@ -269,9 +220,8 @@ export default function Home() {
       currentTrack.current = r.trackId;
       setPictures([]);
       setShown({ cur: null, prev: null });
-      setOpusSvg(null);
       if (engineRef.current) engineRef.current.overlayOn = false;
-      makeArt(r, mode);
+      void paint(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
     } finally {
@@ -288,13 +238,12 @@ export default function Home() {
     setShown((s) => (s.cur === target ? s : { cur: target, prev: s.cur }));
   }, [target]);
 
-  const artOnScreen = (mode === "photo" && !!shown.cur) || (mode === "opus" && !!opusSvg);
+  const artOnScreen = !!shown.cur;
   useEffect(() => {
     if (!engineRef.current) return;
     engineRef.current.overlayOn = artOnScreen;
-    // Opus art stands on its own: no soft lights over it, just grain and the beat pulse.
-    engineRef.current.lightsOff = mode === "opus" && artOnScreen;
-  }, [artOnScreen, mode]);
+    engineRef.current.lightsOff = artOnScreen; // no orbs over real photos: just grain and the beat pulse
+  }, [artOnScreen]);
 
   const listening = status?.source === "mic";
   const hide = idle && isFull;
@@ -304,10 +253,9 @@ export default function Home() {
     <main className={`app${isFull ? " full" : ""}${hide ? " idle" : ""}`}>
       <section className="stage" aria-label="Artwork">
         <div className="pulse" ref={pulseRef}>
-          {mode === "photo" && shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
-          {mode === "photo" && shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
-          {mode === "opus" && opusSvg && <img key={opusSvg.length} className="picture opus" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(opusSvg)}`} alt="" />}
-          <canvas ref={canvasRef} className={`art${(mode === "photo" && shown.cur) || (mode === "opus" && opusSvg) ? " over" : ""}`} aria-hidden="true" />
+          {shown.prev && <img key={`p-${shown.prev}`} className="picture leaving" src={shown.prev} alt="" />}
+          {shown.cur && <img key={`c-${shown.cur}`} className="picture" src={shown.cur} alt="" />}
+          <canvas ref={canvasRef} className={`art${shown.cur ? " over" : ""}`} aria-hidden="true" />
         </div>
         {painting && <span className="painting" aria-label="Painting the picture" />}
         {glError && <p className="gl-error">{glError}</p>}
@@ -315,7 +263,6 @@ export default function Home() {
           <span className="art-name">{song ? status?.name ?? "" : ""}</span>
           <div className="tools">
             <button type="button" className={`tool${listening ? " on" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop syncing to the beat" : "Sync to the beat"} title="Sync to the beat" onClick={() => void toggleMic()}>{Icon.wave}</button>
-            <button type="button" className={`tool${mode === "opus" ? " on" : ""}`} aria-pressed={mode === "opus"} aria-label={mode === "opus" ? "Switch to photo pictures" : "Switch to Opus art"} title={mode === "opus" ? "Opus art (click for photos)" : "Photo (click for Opus art)"} onClick={switchMode}>{Icon.spark}</button>
             <button type="button" className="tool" aria-label={isFull ? "Exit full screen" : "Full screen"} title="Full screen (F)" onClick={toggleFull}>{isFull ? Icon.exit : Icon.full}</button>
           </div>
         </header>

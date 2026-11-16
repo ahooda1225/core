@@ -6,13 +6,13 @@ import { ART_STYLE, signScene } from "@/lib/sign";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Flux Pro 1.1 (not Ultra): still beautiful, about a third cheaper per picture.
-const MODEL = "fal-ai/flux-pro/v1.1";
+// Flux Pro 1.1 Ultra in raw mode: less processed, more natural-looking photos (no "AI gloss").
+const MODEL = "fal-ai/flux-pro/v1.1-ultra";
 
 async function paintNow(scene: string): Promise<string> {
   fal.config({ credentials: process.env.FAL_KEY });
   const result = await fal.subscribe(MODEL, {
-    input: { prompt: `${scene}\n\nStyle: ${ART_STYLE}`, image_size: "landscape_16_9", output_format: "jpeg", safety_tolerance: "2" },
+    input: { prompt: `${scene}\n\nStyle: ${ART_STYLE}`, aspect_ratio: "16:9", raw: true, output_format: "jpeg", safety_tolerance: "2" },
   });
   const url = result.data.images?.[0]?.url;
   if (!url) throw new Error("no image returned");
@@ -21,7 +21,7 @@ async function paintNow(scene: string): Promise<string> {
 
 // One painting per song: later plays reuse it instead of paying again.
 const paint = (trackId: string, scene: string) =>
-  unstable_cache(() => paintNow(scene), ["picture-v2", trackId, createHash("sha1").update(scene).digest("hex")], {
+  unstable_cache(() => paintNow(scene), ["picture-v3", trackId, createHash("sha1").update(scene).digest("hex")], {
     revalidate: 60 * 60 * 24 * 30,
   })();
 
